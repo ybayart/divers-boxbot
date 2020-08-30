@@ -15,7 +15,7 @@ class boxbot:
 		self.private_channel = ["G019XL82M60"]
 		self.ensure_slack()
 		self.session = requests.session()
-		self.uri = 'http://192.168.1.254/ws'
+		self.uri = "http://{}/ws".format(os.environ.get('BOX_IP'))
 		self.headers = {
 			'auth': {
 				'Content-Type': 'application/x-sah-ws-4-call+json',
