@@ -52,7 +52,7 @@ COPY srcs/create_db.sql /docker-entrypoint-initdb.d/
 With this script in `db/srcs/create_db.sql`
 ```
 CREATE DATABASE box;
-CREATE TABLES mac_filter (addr macaddr unique, name varchar(50) unique, active boolean);
+CREATE TABLE mac_filter (addr macaddr unique, name varchar(50) unique, active boolean);
 ```
 
 To launch properly, you need to had your datas in a folder near your bot Dockerfile (or a symlink)
