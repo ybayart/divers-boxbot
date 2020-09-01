@@ -12,7 +12,7 @@ class boxbot:
 		self.bot_token = os.environ.get('SLACK_TOKEN')
 		self.bot = slack.RTMClient(token=self.bot_token)
 		self.client = slack.WebClient(self.bot_token)
-		self.private_channel = os.environ.get('SLACK_CHANNEL')
+		self.private_channel = [os.environ.get('SLACK_CHANNEL'), "D012FT2M6MA"]
 		self.ensure_slack()
 		self.session = requests.session()
 		self.uribox = "http://{}/ws".format(os.environ.get('BOX_IP'))
@@ -122,9 +122,8 @@ class boxbot:
 		else:
 			return False
 
-	def unable_fetch(self, out=False):
-		self.output("Unable to retrieve datas...")
-		if out != False: self.output(r)
+	def unable_fetch(self, out="Unknown"):
+		self.output(f"Unable to retrieve datas... ({out})")
 	
 	def devices(self):
 		payload = {'service': 'Devices', 'method': 'get', 'parameters': {'expression': {'ETHERNET': 'not interface and not self and eth and .Active==true', 'WIFI': 'not interface and not self and wifi and .Active==true'}}}
@@ -248,112 +247,91 @@ class boxbot:
 			self.output('Ports Forward', attachments)
 
 	def mac(self):
-		self.cur.execute("SELECT * FROM box WHERE active=True;");
+		self.cur.execute("SELECT * FROM mac_filter WHERE active=True;");
+		devices = []
 		attachments = []
 		index = 0
+		interfaces = {"Box eth4": True, "Box wl0": True, "Router": True}
 		for entry in self.cur.fetchall():
 			index += 1
+			devices.append(entry[0])
 			attachments.append({
 				'color': '#00ff00' if entry[2] else '#ff0000',
 				'blocks': [
 					{
 						'type': 'section',
-						'text': {
-							'type': 'mrkdwn',
-							'text': f"* ID {index}*"
-						},
 						'fields': [
 							{
 								'type': 'mrkdwn',
-								'text': f"{entry[0]}"
+								'text': f"{entry[1]}"
 							},
 							{
 								'type': 'mrkdwn',
-								'text': f"{entry[1]}"
+								'text': f"{entry[0]}"
 							}
 						]
 					}
 				]
 			})
-		self.output('Mac Filtering (db)', attachments)
+		self.output('Permitted devices', attachments)
 
 		payload = {"service":"NeMo.Intf.lan","method":"getMIBs","parameters":{"mibs":"wlanvap"}}
 		r = self.reqbox(payload)
 		if not r:
-			self.unable_fetch()
+			self.unable_fetch("Box")
+			interfaces['Box eth4'] = False
+			interfaces['Box wl0'] = False
 		else:
 			for interface in ["eth4", "wl0"]:
 				attachments = []
 				rtmp = r['wlanvap'][interface]['MACFiltering']['Entry']
+				devicestmp = devices.copy()
 				for item in rtmp:
 					index = item
 					item = rtmp[item]
-					attachments.append({
-						'color': '#00ff00',
-						'blocks': [
-							{
-								'type': 'section',
-								'text': {
-									'type': 'mrkdwn',
-									'text': f"* ID {index}*"
-								},
-								'fields': [
-									{
-										'type': 'mrkdwn',
-										'text': f"{item['MACAddress']}"
-									}
-								]
-							}
-						]
-					})
-				self.output(f"Mac Filtering (box {interface})", attachments)
+					item['MACAddress'] = item['MACAddress'].lower()
+					if item['MACAddress'] not in devicestmp:
+						interfaces[f"Box {interface}"] = False
+						break
+					devicestmp.remove(item['MACAddress'])
+				if interfaces[f"Box {interface}"] and len(devicestmp) > 0:
+					interfaces[f"Box {interface}"] = False
 
 		route = ["userRpm/WlanMacFilterRpm.htm"]
 		r = self.reqrouter(route)
 		if not r:
 			self.unable_fetch("Router")
+			interfaces['Router'] = False
 		else:
 			attachments = []
 			entries = 0
 			active = False
+			devicestmp = devices.copy()
 			for line in r[0].split('\n'):
 				if active:
 					if line != "0,0 );":
 						entries += 1
 						line = line.split(', ')
-						linemac = line[0][1:-1].replace('-', ':')
+						linemac = line[0][1:-1].replace('-', ':').lower()
 						linename = line[4][1:-1]
-						attachments.append({
-							'color': '#00ff00',
-							'blocks': [
-								{
-									'type': 'section',
-									'text': {
-										'type': 'mrkdwn',
-										'text': f"* ID {entries}*"
-									},
-									'fields': [
-										{
-											'type': 'mrkdwn',
-											'text': f"{linemac}"
-										},
-										{
-											'type': 'mrkdwn',
-											'text': f"{linename}"
-										}
-									]
-								}
-							]
-						})
+						if linemac not in devicestmp:
+							interfaces['Router'] = False
+							break
+						devicestmp.remove(linemac)
 					else:
 						active = False
 				elif line == "var wlanFilterList = new Array(":
 					active = True
-			self.output('Mac Filtering (router)', attachments)
+			if interfaces['Router'] and len(devicestmp) > 0:
+				interfaces['Router'] = False
+		out = []
+		for inter in interfaces:
+			out.append(f"{':heavy_check_mark:' if interfaces[inter] else ':x:'} {inter}")
+		self.output("\n".join(out))
 	
 	def mac_db(self):
 		if len(self.args) == 0:
-			self.cur.execute("SELECT * FROM box ORDER BY name;");
+			self.cur.execute("SELECT * FROM mac_filter ORDER BY active DESC, name;");
 			attachments = []
 			index = 0
 			for entry in self.cur.fetchall():
@@ -363,30 +341,26 @@ class boxbot:
 					'blocks': [
 						{
 							'type': 'section',
-							'text': {
-								'type': 'mrkdwn',
-								'text': f"* ID {index}*"
-							},
 							'fields': [
 								{
 									'type': 'mrkdwn',
-									'text': f"{entry[0]}"
+									'text': f"{entry[1]}"
 								},
 								{
 									'type': 'mrkdwn',
-									'text': f"{entry[1]}"
+									'text': f"{entry[0]}"
 								}
 							]
 						}
 					]
 				})
-			self.output('Mac Filtering', attachments)
+			self.output('Saved mac address', attachments)
 		elif self.args[0] in ["create", "add", "new"]:
 			if len(self.args) < 3:
 				self.output("Missing args")
 			else:
 				try:
-					postgres_insert_query = """ INSERT INTO box (name, addr, active) VALUES (%s,%s,True)"""
+					postgres_insert_query = """ INSERT INTO mac_filter (name, addr, active) VALUES (%s,%s,True)"""
 					record_to_insert = (self.args[1], self.args[2].replace('-', ':'))
 					self.cur.execute(postgres_insert_query, record_to_insert)
 
@@ -394,16 +368,17 @@ class boxbot:
 					self.args = []
 					self.mac_db()
 
-				except (Exception, psycopg2.Error) as error :
+				except (Exception, psycopg2.Error) as error:
+					self.output("An error occured when deleting")
+					print(error)
 					if(self.pg):
-						self.output("An error occured when inserting")
-						print(error)
+						self.pg.rollback()
 		elif self.args[0] in ["remove", "delete", "rm", "del"]:
 			if len(self.args) < 2:
 				self.output("Missing args")
 			else:
 				try:
-					postgres_insert_query = """ DELETE FROM box WHERE name=%s """
+					postgres_insert_query = """ DELETE FROM mac_filter WHERE name=%s """
 					records = []
 					for arg in self.args[1:]:
 						records.append([arg])
@@ -413,16 +388,17 @@ class boxbot:
 					self.args = []
 					self.mac_db()
 
-				except (Exception, psycopg2.Error) as error :
+				except (Exception, psycopg2.Error) as error:
+					self.output("An error occured when deleting")
+					print(error)
 					if(self.pg):
-						self.output("An error occured when deleting")
-						print(error)
+						self.pg.rollback()
 		elif self.args[0] in ["enable", "active", "on"]:
 			if len(self.args) < 2:
 				self.output("Missing args")
 			else:
 				try:
-					postgres_insert_query = """ UPDATE box SET active=True WHERE active=False AND name=%s """
+					postgres_insert_query = """ UPDATE mac_filter SET active=True WHERE active=False AND name=%s """
 					records = []
 					for arg in self.args[1:]:
 						records.append([arg])
@@ -432,16 +408,17 @@ class boxbot:
 					self.args = []
 					self.mac_db()
 
-				except (Exception, psycopg2.Error) as error :
+				except (Exception, psycopg2.Error) as error:
+					self.output("An error occured when deleting")
+					print(error)
 					if(self.pg):
-						self.output("An error occured when updating")
-						print(error)
+						self.pg.rollback()
 		elif self.args[0] in ["disable", "off"]:
 			if len(self.args) < 2:
 				self.output("Missing args")
 			else:
 				try:
-					postgres_insert_query = """ UPDATE box SET active=False WHERE active=True AND name=%s """
+					postgres_insert_query = """ UPDATE mac_filter SET active=False WHERE active=True AND name=%s """
 					records = []
 					for arg in self.args[1:]:
 						records.append([arg])
@@ -451,15 +428,16 @@ class boxbot:
 					self.args = []
 					self.mac_db()
 
-				except (Exception, psycopg2.Error) as error :
+				except (Exception, psycopg2.Error) as error:
+					self.output("An error occured when deleting")
+					print(error)
 					if(self.pg):
-						self.output("An error occured when updating")
-						print(error)
+						self.pg.rollback()
 			
 			
 	def mac_sync(self):
 		self.output("Updating hotspots...")
-		self.cur.execute("SELECT * FROM box WHERE active=True;");
+		self.cur.execute("SELECT * FROM mac_filter WHERE active=True;");
 		index = 0
 		devices = {"box": {}, "router": ["userRpm/WlanMacFilterRpm.htm?Page=1&DoAll=DelAll&vapIdx="]}
 		for entry in self.cur.fetchall():
@@ -482,7 +460,7 @@ class boxbot:
 ` !ports  ` - Show port forward
 `  !mac   ` - Show whitelisted mac address
 ` !mac_db ` - Manage database
-		Usage: `!mac_db <create|remove|active|disable> <NAME> [MacAddr]`
+		Usage: `!mac_db [<create|remove|active|disable> <NAME> [MacAddr]]`
 `!mac_sync` - Synchronise hotspot with active devices in database
 `  !help  ` - Display this help
 		""")
