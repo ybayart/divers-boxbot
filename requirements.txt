@@ -3,3 +3,4 @@ slackclient
 pygments
 isc_dhcp_leases
 timeago
+psycopg2

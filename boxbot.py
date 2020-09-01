@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: latin-1 -*-
 
-import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime
+import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime, re, psycopg2
 from pygments import highlight
 from pygments.lexers import JsonLexer
 from pygments.formatters import TerminalFormatter
@@ -15,7 +15,8 @@ class boxbot:
 		self.private_channel = os.environ.get('SLACK_CHANNEL')
 		self.ensure_slack()
 		self.session = requests.session()
-		self.uri = "http://{}/ws".format(os.environ.get('BOX_IP'))
+		self.uribox = "http://{}/ws".format(os.environ.get('BOX_IP'))
+		self.urirouter = "http://{}".format(os.environ.get('ROUTER_IP'))
 		self.headers = {
 			'auth': {
 				'Content-Type': 'application/x-sah-ws-4-call+json',
@@ -24,6 +25,9 @@ class boxbot:
 			'data': {
 				'Content-Type': 'application/x-sah-ws-4-call+json',
 				'X-Context': ''
+			},
+			'router': {
+				'referer': self.urirouter
 			}
 		}
 		self.auth_payload = {
@@ -35,6 +39,16 @@ class boxbot:
 				'password': os.environ.get('BOX_PASS')
 			}
 		}
+		self.auth_cookie = {
+			"Authorization": os.environ.get("ROUTER_AUTH")
+		}
+		self.pg = psycopg2.connect(
+			host="db",
+			database="box",
+			user="postgres",
+			password=os.environ.get("PG_PASS")
+		)
+		self.cur = self.pg.cursor()
 		slack.RTMClient.run_on(event='message')(self.run)
 		self.bot.start()
 
@@ -76,17 +90,37 @@ class boxbot:
 			attachments=attachments
 		)
 	
-	def request(self, payload={}):
-		r = self.session.post('http://192.168.1.254/ws', headers=self.headers['data'], json=payload).json()
-		if r['status'] == None:
-			r = self.session.post(self.uri, headers=self.headers['auth'], json=self.auth_payload).json()
-			if r['status'] != 0:
-				return False
+	def reqbox(self, payload={}, check=True):
+		if not check: self.headers['data']['X-Context'] = self.session.post(self.uribox, headers=self.headers['auth'], json=self.auth_payload).json()['data']['contextID']
+		r = self.session.post(self.uribox, headers=self.headers['data'], json=payload).json()
+		if check:
+			if r['status'] == None:
+				r = self.session.post(self.uribox, headers=self.headers['auth'], json=self.auth_payload).json()
+				if r['status'] != 0:
+					return False
+				else:
+					self.headers['data']['X-Context'] = r['data']['contextID']
+					return self.reqbox(payload)
 			else:
-				self.headers['data']['X-Context'] = r['data']['contextID']
-				return self.request(payload)
+				return r['status']
 		else:
-			return r['status']
+			return False
+	
+	def reqrouter(self, routes):
+		r = requests.get(f"{self.urirouter}/userRpm/LoginRpm.htm?Save=Save", cookies=self.auth_cookie)
+		auth_key_match = re.search(r"http\://[0-9A-Za-z.]+/([A-Z]{16})/userRpm/Index.htm", r.text)
+		if auth_key_match:
+			key = auth_key_match.group(1)
+			uri = "{}/{}".format(self.urirouter, key)
+			self.headers['router']['referer'] = uri
+			r = []
+			for route in routes:
+				r.append(requests.get("{}/{}".format(uri, route), cookies=self.auth_cookie, headers=self.headers['router']).text)
+			requests.get(f"{uri}/userRpm/LogoutRpm.htm", cookies=self.auth_cookie, headers=self.headers['router'])
+			requests.get(f"{uri}/userRpm/LoginRpm.htm?Save=Save", cookies=self.auth_cookie)
+			return (r)
+		else:
+			return False
 
 	def unable_fetch(self, out=False):
 		self.output("Unable to retrieve datas...")
@@ -94,12 +128,12 @@ class boxbot:
 	
 	def devices(self):
 		payload = {'service': 'Devices', 'method': 'get', 'parameters': {'expression': {'ETHERNET': 'not interface and not self and eth and .Active==true', 'WIFI': 'not interface and not self and wifi and .Active==true'}}}
-		r = self.request(payload)
+		r = self.reqbox(payload)
 		if not r:
 			self.unable_fetch()
 		else:
 			attachments = []
-			leases = isc_dhcp_leases.IscDhcpLeases('/data/dhcp.leases').get_current()
+			leases = isc_dhcp_leases.IscDhcpLeases('/dhcp/dhcpd.leases').get_current()
 			devices = {}
 			for interface in r:
 				for item in r[interface]:
@@ -120,6 +154,10 @@ class boxbot:
 										{
 											'type': 'mrkdwn',
 											'text': lease.ip if lease else item['IPAddress']
+										},
+										{
+											'type': 'mrkdwn',
+											'text': item['PhysAddress']
 										},
 										{
 											'type': 'mrkdwn',
@@ -146,10 +184,38 @@ class boxbot:
 				for item in devices[interface]:
 					attachments.append(item)
 			self.output('Connected devices', attachments)
+	
+	def dhcp(self):
+		attachments = []
+		leases = isc_dhcp_leases.IscDhcpLeases('/dhcp/dhcpd.leases').get_current()
+		for lease in leases:
+			lease = leases[lease]
+			attachments.append({
+				'blocks': [
+					{
+						'type': 'section',
+						'text': {
+							'type': 'mrkdwn',
+							'text': f"*{lease.hostname}*"
+						},
+						'fields': [
+							{
+								'type': 'mrkdwn',
+								'text': lease.ip
+							},
+							{
+								'type': 'mrkdwn',
+								'text': lease.ethernet
+							}
+						]
+					}
+				]
+			})
+		self.output("DHCP Leases", attachments)
 
 	def ports(self):
 		payload = {'service': 'Firewall', 'method': 'getPortForwarding', 'parameters': {'origin': 'webui'}}
-		r = self.request(payload)
+		r = self.reqbox(payload)
 		if not r:
 			self.unable_fetch()
 		else:
@@ -180,18 +246,255 @@ class boxbot:
 					]
 				})
 			self.output('Ports Forward', attachments)
+
+	def mac(self):
+		self.cur.execute("SELECT * FROM box WHERE active=True;");
+		attachments = []
+		index = 0
+		for entry in self.cur.fetchall():
+			index += 1
+			attachments.append({
+				'color': '#00ff00' if entry[2] else '#ff0000',
+				'blocks': [
+					{
+						'type': 'section',
+						'text': {
+							'type': 'mrkdwn',
+							'text': f"* ID {index}*"
+						},
+						'fields': [
+							{
+								'type': 'mrkdwn',
+								'text': f"{entry[0]}"
+							},
+							{
+								'type': 'mrkdwn',
+								'text': f"{entry[1]}"
+							}
+						]
+					}
+				]
+			})
+		self.output('Mac Filtering (db)', attachments)
+
+		payload = {"service":"NeMo.Intf.lan","method":"getMIBs","parameters":{"mibs":"wlanvap"}}
+		r = self.reqbox(payload)
+		if not r:
+			self.unable_fetch()
+		else:
+			for interface in ["eth4", "wl0"]:
+				attachments = []
+				rtmp = r['wlanvap'][interface]['MACFiltering']['Entry']
+				for item in rtmp:
+					index = item
+					item = rtmp[item]
+					attachments.append({
+						'color': '#00ff00',
+						'blocks': [
+							{
+								'type': 'section',
+								'text': {
+									'type': 'mrkdwn',
+									'text': f"* ID {index}*"
+								},
+								'fields': [
+									{
+										'type': 'mrkdwn',
+										'text': f"{item['MACAddress']}"
+									}
+								]
+							}
+						]
+					})
+				self.output(f"Mac Filtering (box {interface})", attachments)
+
+		route = ["userRpm/WlanMacFilterRpm.htm"]
+		r = self.reqrouter(route)
+		if not r:
+			self.unable_fetch("Router")
+		else:
+			attachments = []
+			entries = 0
+			active = False
+			for line in r[0].split('\n'):
+				if active:
+					if line != "0,0 );":
+						entries += 1
+						line = line.split(', ')
+						linemac = line[0][1:-1].replace('-', ':')
+						linename = line[4][1:-1]
+						attachments.append({
+							'color': '#00ff00',
+							'blocks': [
+								{
+									'type': 'section',
+									'text': {
+										'type': 'mrkdwn',
+										'text': f"* ID {entries}*"
+									},
+									'fields': [
+										{
+											'type': 'mrkdwn',
+											'text': f"{linemac}"
+										},
+										{
+											'type': 'mrkdwn',
+											'text': f"{linename}"
+										}
+									]
+								}
+							]
+						})
+					else:
+						active = False
+				elif line == "var wlanFilterList = new Array(":
+					active = True
+			self.output('Mac Filtering (router)', attachments)
+	
+	def mac_db(self):
+		if len(self.args) == 0:
+			self.cur.execute("SELECT * FROM box ORDER BY name;");
+			attachments = []
+			index = 0
+			for entry in self.cur.fetchall():
+				index += 1
+				attachments.append({
+					'color': '#00ff00' if entry[2] else '#ff0000',
+					'blocks': [
+						{
+							'type': 'section',
+							'text': {
+								'type': 'mrkdwn',
+								'text': f"* ID {index}*"
+							},
+							'fields': [
+								{
+									'type': 'mrkdwn',
+									'text': f"{entry[0]}"
+								},
+								{
+									'type': 'mrkdwn',
+									'text': f"{entry[1]}"
+								}
+							]
+						}
+					]
+				})
+			self.output('Mac Filtering', attachments)
+		elif self.args[0] in ["create", "add", "new"]:
+			if len(self.args) < 3:
+				self.output("Missing args")
+			else:
+				try:
+					postgres_insert_query = """ INSERT INTO box (name, addr, active) VALUES (%s,%s,True)"""
+					record_to_insert = (self.args[1], self.args[2].replace('-', ':'))
+					self.cur.execute(postgres_insert_query, record_to_insert)
+
+					self.pg.commit()
+					self.args = []
+					self.mac_db()
+
+				except (Exception, psycopg2.Error) as error :
+					if(self.pg):
+						self.output("An error occured when inserting")
+						print(error)
+		elif self.args[0] in ["remove", "delete", "rm", "del"]:
+			if len(self.args) < 2:
+				self.output("Missing args")
+			else:
+				try:
+					postgres_insert_query = """ DELETE FROM box WHERE name=%s """
+					records = []
+					for arg in self.args[1:]:
+						records.append([arg])
+					self.cur.executemany(postgres_insert_query, records)
+
+					self.pg.commit()
+					self.args = []
+					self.mac_db()
+
+				except (Exception, psycopg2.Error) as error :
+					if(self.pg):
+						self.output("An error occured when deleting")
+						print(error)
+		elif self.args[0] in ["enable", "active", "on"]:
+			if len(self.args) < 2:
+				self.output("Missing args")
+			else:
+				try:
+					postgres_insert_query = """ UPDATE box SET active=True WHERE active=False AND name=%s """
+					records = []
+					for arg in self.args[1:]:
+						records.append([arg])
+					self.cur.executemany(postgres_insert_query, records)
+
+					self.pg.commit()
+					self.args = []
+					self.mac_db()
+
+				except (Exception, psycopg2.Error) as error :
+					if(self.pg):
+						self.output("An error occured when updating")
+						print(error)
+		elif self.args[0] in ["disable", "off"]:
+			if len(self.args) < 2:
+				self.output("Missing args")
+			else:
+				try:
+					postgres_insert_query = """ UPDATE box SET active=False WHERE active=True AND name=%s """
+					records = []
+					for arg in self.args[1:]:
+						records.append([arg])
+					self.cur.executemany(postgres_insert_query, records)
+
+					self.pg.commit()
+					self.args = []
+					self.mac_db()
+
+				except (Exception, psycopg2.Error) as error :
+					if(self.pg):
+						self.output("An error occured when updating")
+						print(error)
+			
+			
+	def mac_sync(self):
+		self.output("Updating hotspots...")
+		self.cur.execute("SELECT * FROM box WHERE active=True;");
+		index = 0
+		devices = {"box": {}, "router": ["userRpm/WlanMacFilterRpm.htm?Page=1&DoAll=DelAll&vapIdx="]}
+		for entry in self.cur.fetchall():
+			index += 1
+			devices["box"][index] = {"MACAddress": entry[0].upper()}
+			devices["router"].append(f"userRpm/WlanMacFilterRpm.htm?Mac={entry[0]}&Desc={entry[1]}&Type=1&entryEnabled=1&Changed=0&SelIndex=0&Page=1&vapIdx=1&Save=Save")
+		for interface in ["eth4", "wl0"]:
+			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Entry":devices["box"]}}}}}}
+			self.reqbox(payload, check=False)
+			self.output(f"Box ({interface}) updated")
+		self.reqrouter(devices["router"])
+		self.output(f"Router updated")
+		self.mac()
+
 	
 	def help(self):
 		self.output("""
-` !who ` - Show devices connected
-`!ports` - Show port forward
-`!help ` - Display this help
+`  !who   ` - Show devices connected
+`  !dhcp  ` - Show active dhcp leases
+` !ports  ` - Show port forward
+`  !mac   ` - Show whitelisted mac address
+` !mac_db ` - Manage database
+		Usage: `!mac_db <create|remove|active|disable> <NAME> [MacAddr]`
+`!mac_sync` - Synchronise hotspot with active devices in database
+`  !help  ` - Display this help
 		""")
 	
 	def dispatch(self):
-		if   self.cmd == "who":		self.devices()
-		elif self.cmd == "ports":	self.ports()
-		elif self.cmd == "help":	self.help()
+		if   self.cmd == "who":			self.devices()
+		elif self.cmd == "dhcp":		self.dhcp()
+		elif self.cmd == "ports":		self.ports()
+		elif self.cmd == "mac":			self.mac()
+		elif self.cmd == "mac_db":		self.mac_db()
+		elif self.cmd == "mac_sync":	self.mac_sync()
+		elif self.cmd == "help":		self.help()
 	
 	def run(self, **event):
 		self.event = event
