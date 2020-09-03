@@ -247,7 +247,7 @@ class boxbot:
 			self.output('Ports Forward', attachments)
 
 	def mac(self):
-		self.cur.execute("SELECT * FROM mac_filter WHERE active=True;");
+		self.cur.execute("SELECT * FROM mac_filter WHERE active=True ORDER BY name ASC;");
 		devices = []
 		attachments = []
 		index = 0
