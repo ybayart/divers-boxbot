@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: latin-1 -*-
 
-import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime, re, psycopg2
+import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime, re, psycopg2, math
 from pygments import highlight
 from pygments.lexers import JsonLexer
 from pygments.formatters import TerminalFormatter
@@ -124,6 +124,60 @@ class boxbot:
 
 	def unable_fetch(self, out="Unknown"):
 		self.output(f"Unable to retrieve datas... ({out})")
+
+	def fetch_router_list(self, devices=None, page=1):
+		if devices == None: devices = {}
+		route = [f"userRpm/WlanMacFilterRpm.htm?Page={page}&&vapIdx="]
+		r = self.reqrouter(route)
+		if not r:
+			return None
+		else:
+			attachments = []
+			entries = (page - 1) * 8
+			active = {'para': False, 'list': False}
+			for line in r[0].split('\n'):
+				if active['para']:
+					if line != "0,0 );":
+						para = line.split(', ')
+					else:
+						active['para'] = False
+				if active['list']:
+					if line != "0,0 );":
+						line = line.split(', ')
+						linemac = line[0][1:-1].replace('-', ':').lower()
+						linename = line[4][1:-1]
+						devices[linemac] = {'name': linename, 'index': entries}
+						entries += 1
+					else:
+						active['list'] = False
+				elif line == "var wlanFilterList = new Array(":
+					active['list'] = True
+				elif line == "var wlanFilterPara = new Array(":
+					active['para'] = True
+		if (para[4] == '1'):
+			return self.fetch_router_list(devices, page + 1)
+		else:
+			return devices
+
+	def check_router_list(self, devices):
+		router = {'state': True, 'to_del': [], 'to_add': []}
+		routerdevices = self.fetch_router_list()
+		if routerdevices == None:
+			return None
+		else:
+			attachments = []
+			devicestmp = devices.copy()
+			for device in routerdevices:
+				if device not in devicestmp:
+					router['state'] = False
+					router['to_del'].append(routerdevices[device])
+				devicestmp.pop(device, None)
+			if len(devicestmp) > 0:
+				router['state'] = False
+				router['to_add'].extend({'mac': device, 'name': devicestmp[device]} for device in devicestmp)
+		return router
+
+	# PUBLIC METHOD
 	
 	def devices(self):
 		payload = {'service': 'Devices', 'method': 'get', 'parameters': {'expression': {'ETHERNET': 'not interface and not self and eth and .Active==true', 'WIFI': 'not interface and not self and wifi and .Active==true'}}}
@@ -247,14 +301,19 @@ class boxbot:
 			self.output('Ports Forward', attachments)
 
 	def mac(self):
-		self.cur.execute("SELECT * FROM mac_filter WHERE active=True ORDER BY name ASC;");
-		devices = []
+		self.cur.execute("SELECT * FROM mac_filter ORDER BY name ASC;");
+		devices = {}
+		devicesall = {}
 		attachments = []
 		index = 0
-		interfaces = {"Box eth4": True, "Box wl0": True, "Router": True}
+		interfaces = {"Box eth4": {"state": True, "to_del": [], "to_add": []}, "Box wl0": {"state": True, "to_del": [], "to_add": []}, "Router": {"state": True, "to_del": [], "to_add": []}}
 		for entry in self.cur.fetchall():
+			devicesall[entry[0]] = entry[1]
+			if not entry[2]: continue
 			index += 1
-			devices.append(entry[0])
+			if entry[0] not in devices:
+				devices[entry[0]] = []
+			devices[entry[0]] = entry[1]
 			attachments.append({
 				'color': '#00ff00' if entry[2] else '#ff0000',
 				'blocks': [
@@ -279,8 +338,8 @@ class boxbot:
 		r = self.reqbox(payload)
 		if not r:
 			self.unable_fetch("Box")
-			interfaces['Box eth4'] = False
-			interfaces['Box wl0'] = False
+			interfaces['Box eth4']['state'] = False
+			interfaces['Box wl0']['state'] = False
 		else:
 			for interface in ["eth4", "wl0"]:
 				attachments = []
@@ -291,42 +350,30 @@ class boxbot:
 					item = rtmp[item]
 					item['MACAddress'] = item['MACAddress'].lower()
 					if item['MACAddress'] not in devicestmp:
-						interfaces[f"Box {interface}"] = False
-						break
-					devicestmp.remove(item['MACAddress'])
-				if interfaces[f"Box {interface}"] and len(devicestmp) > 0:
-					interfaces[f"Box {interface}"] = False
+						interfaces[f"Box {interface}"]['state'] = False
+						if item['MACAddress'] in devicesall: name = devicesall[item['MACAddress']]
+						else: name = item['MACAddress']
+						interfaces[f"Box {interface}"]['to_del'].append(name)
+					devicestmp.pop(item['MACAddress'], None)
+				if len(devicestmp) > 0:
+					interfaces[f"Box {interface}"]['state'] = False
+					interfaces[f"Box {interface}"]['to_add'].extend(devicestmp.values())
 
-		route = ["userRpm/WlanMacFilterRpm.htm"]
-		r = self.reqrouter(route)
-		if not r:
+		r = self.check_router_list(devices)
+		if r == None:
 			self.unable_fetch("Router")
-			interfaces['Router'] = False
+			interfaces['Router']['state'] = False
 		else:
-			attachments = []
-			entries = 0
-			active = False
-			devicestmp = devices.copy()
-			for line in r[0].split('\n'):
-				if active:
-					if line != "0,0 );":
-						entries += 1
-						line = line.split(', ')
-						linemac = line[0][1:-1].replace('-', ':').lower()
-						linename = line[4][1:-1]
-						if linemac not in devicestmp:
-							interfaces['Router'] = False
-							break
-						devicestmp.remove(linemac)
-					else:
-						active = False
-				elif line == "var wlanFilterList = new Array(":
-					active = True
-			if interfaces['Router'] and len(devicestmp) > 0:
-				interfaces['Router'] = False
+			interfaces['Router'] = r
+			if r['to_del']: interfaces['Router']['to_del'] = (device['name'] for device in r['to_del'])
+			if r['to_add']: interfaces['Router']['to_add'] = (device['name'] for device in r['to_add'])
+
 		out = []
 		for inter in interfaces:
-			out.append(f"{':heavy_check_mark:' if interfaces[inter] else ':x:'} {inter}")
+			outtmp = f"{':heavy_check_mark:' if interfaces[inter]['state'] else ':x:'} {inter}"
+			if interfaces[inter]['to_del']: outtmp += f"\n	| to_del: {', '.join(sorted(interfaces[inter]['to_del']))}"
+			if interfaces[inter]['to_add']: outtmp += f"\n	| to_add: {', '.join(sorted(interfaces[inter]['to_add']))}"
+			out.append(outtmp)
 		self.output("\n".join(out))
 	
 	def mac_db(self):
@@ -439,17 +486,28 @@ class boxbot:
 		self.output("Updating hotspots...")
 		self.cur.execute("SELECT * FROM mac_filter WHERE active=True;");
 		index = 0
-		devices = {"box": {}, "router": ["userRpm/WlanMacFilterRpm.htm?Page=1&DoAll=DelAll&vapIdx="]}
+		devices = {'box': {}, 'router': {}}
 		for entry in self.cur.fetchall():
 			index += 1
-			devices["box"][index] = {"MACAddress": entry[0].upper()}
-			devices["router"].append(f"userRpm/WlanMacFilterRpm.htm?Mac={entry[0]}&Desc={entry[1]}&Type=1&entryEnabled=1&Changed=0&SelIndex=0&Page=1&vapIdx=1&Save=Save")
-		for interface in ["eth4", "wl0"]:
+			devices['box'][index] = {'MACAddress': entry[0].upper()}
+			devices['router'][entry[0]] = entry[1]
+		for interface in ['eth4', 'wl0']:
 			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Entry":devices["box"]}}}}}}
 			self.reqbox(payload, check=False)
 			self.output(f"Box ({interface}) updated")
-		self.reqrouter(devices["router"])
-		self.output(f"Router updated")
+		r = self.check_router_list(devices['router'])
+		if r == None:
+			self.unable_fetch("Router")
+		else:
+			if not r['state']:
+				routes = []
+				for device in reversed(r['to_del']):
+					routes.append("userRpm/WlanMacFilterRpm.htm?Del={}&Page={}&vapIdx=0".format(device['index'], math.ceil(device['index'] / 8)))
+				for device in r['to_add']:
+					routes.append("userRpm/WlanMacFilterRpm.htm?Mac={}&Desc={}&Type=1&entryEnabled=1&Changed=0&SelIndex=0&Page=1&vapIdx=1&Save=Save".format(device['mac'], device['name']))
+				if routes:
+					self.reqrouter(routes)
+			self.output(f"Router updated")
 		self.mac()
 
 	
