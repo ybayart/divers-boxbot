@@ -16,7 +16,10 @@ class boxbot:
 		self.ensure_slack()
 		self.session = requests.session()
 		self.uribox = "http://{}/ws".format(os.environ.get('BOX_IP'))
-		self.urirouter = "http://{}".format(os.environ.get('ROUTER_IP'))
+		self.uriwrt = {
+			'rpi': "http://{}/cgi-bin/luci/rpc".format(os.environ.get('RPI_IP')),
+			'router': "http://{}/cgi-bin/luci/rpc".format(os.environ.get('ROUTER_IP'))
+		}
 		self.headers = {
 			'auth': {
 				'Content-Type': 'application/x-sah-ws-4-call+json',
@@ -25,9 +28,6 @@ class boxbot:
 			'data': {
 				'Content-Type': 'application/x-sah-ws-4-call+json',
 				'X-Context': ''
-			},
-			'router': {
-				'referer': self.urirouter
 			}
 		}
 		self.auth_payload = {
@@ -39,9 +39,6 @@ class boxbot:
 				'password': os.environ.get('BOX_PASS')
 			}
 		}
-		self.auth_cookie = {
-			"Authorization": os.environ.get("ROUTER_AUTH")
-		}
 		self.pg = psycopg2.connect(
 			host="db",
 			database="box",
@@ -49,6 +46,7 @@ class boxbot:
 			password=os.environ.get("PG_PASS")
 		)
 		self.cur = self.pg.cursor()
+		self.wrt_token = {"rpi": False, "router": False}
 		slack.RTMClient.run_on(event='message')(self.run)
 		self.bot.start()
 
@@ -106,76 +104,38 @@ class boxbot:
 		else:
 			return False
 	
-	def reqrouter(self, routes):
-		r = requests.get(f"{self.urirouter}/userRpm/LoginRpm.htm?Save=Save", cookies=self.auth_cookie)
-		auth_key_match = re.search(r"http\://[0-9A-Za-z.]+/([A-Z]{16})/userRpm/Index.htm", r.text)
-		if auth_key_match:
-			key = auth_key_match.group(1)
-			uri = "{}/{}".format(self.urirouter, key)
-			self.headers['router']['referer'] = uri
-			r = []
-			for route in routes:
-				r.append(requests.get("{}/{}".format(uri, route), cookies=self.auth_cookie, headers=self.headers['router']).text)
-			requests.get(f"{uri}/userRpm/LogoutRpm.htm", cookies=self.auth_cookie, headers=self.headers['router'])
-			requests.get(f"{uri}/userRpm/LoginRpm.htm?Save=Save", cookies=self.auth_cookie)
-			return (r)
+	def reqwrt(self, uri='router', payload={}):
+		r = requests.get(f"{self.uriwrt[uri]}/uci?auth={self.wrt_token[uri]}", json=payload)
+		if r.status_code == 200:
+			return r.json()['result']
 		else:
-			return False
+			if self.wrt_token[uri] == None:
+				self.wrt_token[uri] = False
+				return None
+			else:
+				self.wrt_token[uri] = None
+				self.connect_wrt(uri)
+				return self.reqwrt(uri, payload)
+
+	def connect_wrt(self, uri):
+		payload = {
+			'id': 1,
+			'method': 'login',
+			'params': [
+				os.environ.get(f"{uri.upper()}_USER"),
+				os.environ.get(f"{uri.upper()}_PASS")
+			]
+		}
+		r = requests.get("{}/auth".format(self.uriwrt[uri]), json=payload)
+		if r.status_code == 200:
+			self.wrt_token[uri] = r.json()['result']
+	
+	def apply_wrt(self, uri='router'):
+		payload = {'method': 'apply'}
+		self.reqwrt(uri, payload)
 
 	def unable_fetch(self, out="Unknown"):
 		self.output(f"Unable to retrieve datas... ({out})")
-
-	def fetch_router_list(self, devices=None, page=1):
-		if devices == None: devices = {}
-		route = [f"userRpm/WlanMacFilterRpm.htm?Page={page}&&vapIdx="]
-		r = self.reqrouter(route)
-		if not r:
-			return None
-		else:
-			attachments = []
-			entries = (page - 1) * 8
-			active = {'para': False, 'list': False}
-			for line in r[0].split('\n'):
-				if active['para']:
-					if line != "0,0 );":
-						para = line.split(', ')
-					else:
-						active['para'] = False
-				if active['list']:
-					if line != "0,0 );":
-						line = line.split(', ')
-						linemac = line[0][1:-1].replace('-', ':').lower()
-						linename = line[4][1:-1]
-						devices[linemac] = {'name': linename, 'index': entries}
-						entries += 1
-					else:
-						active['list'] = False
-				elif line == "var wlanFilterList = new Array(":
-					active['list'] = True
-				elif line == "var wlanFilterPara = new Array(":
-					active['para'] = True
-		if (para[4] == '1'):
-			return self.fetch_router_list(devices, page + 1)
-		else:
-			return devices
-
-	def check_router_list(self, devices):
-		router = {'state': True, 'to_del': [], 'to_add': []}
-		routerdevices = self.fetch_router_list()
-		if routerdevices == None:
-			return None
-		else:
-			attachments = []
-			devicestmp = devices.copy()
-			for device in routerdevices:
-				if device not in devicestmp:
-					router['state'] = False
-					router['to_del'].append(routerdevices[device])
-				devicestmp.pop(device, None)
-			if len(devicestmp) > 0:
-				router['state'] = False
-				router['to_add'].extend({'mac': device, 'name': devicestmp[device]} for device in devicestmp)
-		return router
 
 	# PUBLIC METHOD
 	
@@ -306,7 +266,9 @@ class boxbot:
 		devicesall = {}
 		attachments = []
 		index = 0
-		interfaces = {"Box eth4": {"state": True, "to_del": [], "to_add": []}, "Box wl0": {"state": True, "to_del": [], "to_add": []}, "Router": {"state": True, "to_del": [], "to_add": []}}
+		interfaces = {}
+		for inter in ["Box eth4", "Box wl0", "Router", "OpenWRT"]:
+			interfaces[inter] = {"state": True, "to_del": [], "to_add": []}
 		for entry in self.cur.fetchall():
 			devicesall[entry[0]] = entry[1]
 			if not entry[2]: continue
@@ -359,14 +321,25 @@ class boxbot:
 					interfaces[f"Box {interface}"]['state'] = False
 					interfaces[f"Box {interface}"]['to_add'].extend(devicestmp.values())
 
-		r = self.check_router_list(devices)
-		if r == None:
-			self.unable_fetch("Router")
-			interfaces['Router']['state'] = False
-		else:
-			interfaces['Router'] = r
-			if r['to_del']: interfaces['Router']['to_del'] = (device['name'] for device in r['to_del'])
-			if r['to_add']: interfaces['Router']['to_add'] = (device['name'] for device in r['to_add'])
+		for interface in {'router': 'Router', 'rpi': 'OpenWRT'}.items():
+			payload = {'method': 'get', 'params': ['wireless', 'default_radio0', 'maclist']}
+			r = self.reqwrt(interface[0], payload)
+			if not r:
+				self.unable_fetch(interface[1])
+				interfaces[interface[1]]['state'] = False
+			else:
+				devicestmp = devices.copy()
+				for addr in r:
+					addr = addr.lower()
+					if addr not in devicestmp:
+						interfaces[interface[1]]['state'] = False
+						if addr in devicesall: name = devicesall[addr]
+						else: name = addr
+						interfaces[interface[1]]['to_del'].append(name)
+					devicestmp.pop(addr, None)
+				if len(devicestmp) > 0:
+					interfaces[interface[1]]['state'] = False
+					interfaces[interface[1]]['to_add'].extend(devicestmp.values())
 
 		out = []
 		for inter in interfaces:
@@ -495,19 +468,11 @@ class boxbot:
 			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Entry":devices["box"]}}}}}}
 			self.reqbox(payload, check=False)
 			self.output(f"Box ({interface}) updated")
-		r = self.check_router_list(devices['router'])
-		if r == None:
-			self.unable_fetch("Router")
-		else:
-			if not r['state']:
-				routes = []
-				for device in reversed(r['to_del']):
-					routes.append("userRpm/WlanMacFilterRpm.htm?Del={}&Page={}&vapIdx=0".format(device['index'], math.ceil(device['index'] / 8)))
-				for device in r['to_add']:
-					routes.append("userRpm/WlanMacFilterRpm.htm?Mac={}&Desc={}&Type=1&entryEnabled=1&Changed=0&SelIndex=0&Page=1&vapIdx=1&Save=Save".format(device['mac'], device['name']))
-				if routes:
-					self.reqrouter(routes)
-			self.output(f"Router updated")
+		payload = {'method': 'set', 'params': ['wireless', 'default_radio0', 'maclist', list(devices['router'].keys())]}
+		for interface in {'router': 'Router', 'rpi': 'OpenWRT'}.items():
+			self.reqwrt(interface[0], payload)
+			self.apply_wrt(interface[0])
+			self.output(f"{interface[1]} updated")
 		self.mac()
 
 	

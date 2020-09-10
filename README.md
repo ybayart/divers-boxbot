@@ -14,8 +14,12 @@ services:
       BOX_USER:
       BOX_PASS:
       BOX_IP:
-      ROUTER_AUTH:
+      ROUTER_USER:
+      ROUTER_PASS:
       ROUTER_IP:
+      RPI_USER:
+      RPI_PASS:
+      RPI_IP:
       PG_PASS: password
       SLACK_TOKEN:
       SLACK_CHANNEL:
@@ -28,6 +32,8 @@ services:
     environment:
       POSTGRES_PASSWORD: password
       TZ: Europe/Paris
+    volumes:
+    - './db/data:/var/lib/postgresql/data'
 ```
 
 with Dockerfiles in subfolder `bot`
