@@ -496,6 +496,7 @@ class boxbot:
 		elif self.cmd == "mac_db":		self.mac_db()
 		elif self.cmd == "mac_sync":	self.mac_sync()
 		elif self.cmd == "help":		self.help()
+		elif self.cmd == "info":		self.help()
 	
 	def run(self, **event):
 		self.event = event
