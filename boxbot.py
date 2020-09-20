@@ -389,7 +389,7 @@ class boxbot:
 					self.mac_db()
 
 				except (Exception, psycopg2.Error) as error:
-					self.output("An error occured when deleting")
+					self.output("An error occured when creating")
 					print(error)
 					if(self.pg):
 						self.pg.rollback()
@@ -429,7 +429,7 @@ class boxbot:
 					self.mac_db()
 
 				except (Exception, psycopg2.Error) as error:
-					self.output("An error occured when deleting")
+					self.output("An error occured when updating")
 					print(error)
 					if(self.pg):
 						self.pg.rollback()
@@ -449,7 +449,7 @@ class boxbot:
 					self.mac_db()
 
 				except (Exception, psycopg2.Error) as error:
-					self.output("An error occured when deleting")
+					self.output("An error occured when updating")
 					print(error)
 					if(self.pg):
 						self.pg.rollback()
