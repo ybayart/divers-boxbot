@@ -472,8 +472,9 @@ class boxbot:
 		for interface in {'Router 2.4G': ['router', 0], 'Router 5G': ['router', 1], 'OpenWRT': ['rpi', 0]}.items():
 			payload['params'][1] = f"default_radio{interface[1][1]}"
 			self.reqwrt(interface[1][0], payload)
-			self.apply_wrt(interface[1][0])
 			self.output(f"{interface[0]} updated")
+		for interface in ['router', 'rpi']:
+			self.apply_wrt(interface)
 		self.mac()
 
 	
