@@ -1,4 +1,4 @@
-BoxBot is a Slack bot & a crowler for Livebox 5 & TP-LINK WR841N
+BoxBot is a Slack bot & a crowler for Livebox 5 & OpenWRT
 
 To deploy, just use docker-compose
 ```
