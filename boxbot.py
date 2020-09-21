@@ -267,7 +267,7 @@ class boxbot:
 		attachments = []
 		index = 0
 		interfaces = {}
-		for inter in ["Box eth4", "Box wl0", "Router", "OpenWRT"]:
+		for inter in ["Box eth4", "Box wl0", "Router 2.4G", "Router 5G", "OpenWRT"]:
 			interfaces[inter] = {"state": True, "to_del": [], "to_add": []}
 		for entry in self.cur.fetchall():
 			devicesall[entry[0]] = entry[1]
@@ -321,25 +321,25 @@ class boxbot:
 					interfaces[f"Box {interface}"]['state'] = False
 					interfaces[f"Box {interface}"]['to_add'].extend(devicestmp.values())
 
-		for interface in {'router': 'Router', 'rpi': 'OpenWRT'}.items():
-			payload = {'method': 'get', 'params': ['wireless', 'default_radio0', 'maclist']}
-			r = self.reqwrt(interface[0], payload)
+		for interface in {'Router 2.4G': ['router', 0], 'Router 5G': ['router', 1], 'OpenWRT': ['rpi', 0]}.items():
+			payload = {'method': 'get', 'params': ['wireless', f"default_radio{interface[1][1]}", 'maclist']}
+			r = self.reqwrt(interface[1][0], payload)
 			if not r:
-				self.unable_fetch(interface[1])
-				interfaces[interface[1]]['state'] = False
+				self.unable_fetch(interface[0])
+				interfaces[interface[0]]['state'] = False
 			else:
 				devicestmp = devices.copy()
 				for addr in r:
 					addr = addr.lower()
 					if addr not in devicestmp:
-						interfaces[interface[1]]['state'] = False
+						interfaces[interface[0]]['state'] = False
 						if addr in devicesall: name = devicesall[addr]
 						else: name = addr
-						interfaces[interface[1]]['to_del'].append(name)
+						interfaces[interface[0]]['to_del'].append(name)
 					devicestmp.pop(addr, None)
 				if len(devicestmp) > 0:
-					interfaces[interface[1]]['state'] = False
-					interfaces[interface[1]]['to_add'].extend(devicestmp.values())
+					interfaces[interface[0]]['state'] = False
+					interfaces[interface[0]]['to_add'].extend(devicestmp.values())
 
 		out = []
 		for inter in interfaces:
@@ -468,11 +468,12 @@ class boxbot:
 			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Entry":devices["box"]}}}}}}
 			self.reqbox(payload, check=False)
 			self.output(f"Box ({interface}) updated")
-		payload = {'method': 'set', 'params': ['wireless', 'default_radio0', 'maclist', list(devices['router'].keys())]}
-		for interface in {'router': 'Router', 'rpi': 'OpenWRT'}.items():
-			self.reqwrt(interface[0], payload)
-			self.apply_wrt(interface[0])
-			self.output(f"{interface[1]} updated")
+		payload = {'method': 'set', 'params': ['wireless', '', 'maclist', list(devices['router'].keys())]}
+		for interface in {'Router 2.4G': ['router', 0], 'Router 5G': ['router', 1], 'OpenWRT': ['rpi', 0]}.items():
+			payload['params'][1] = f"default_radio{interface[1][1]}"
+			self.reqwrt(interface[1][0], payload)
+			self.apply_wrt(interface[1][0])
+			self.output(f"{interface[0]} updated")
 		self.mac()
 
 	
