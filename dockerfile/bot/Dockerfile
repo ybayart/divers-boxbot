@@ -4,4 +4,4 @@ MAINTAINER hexanyn, hexanyn@gmail.com
 
 RUN apk add gcc musl-dev postgresql-libs postgresql-dev
 
-ENTRYPOINT bash /data/start.sh
+ENTRYPOINT sh /data/start.sh
