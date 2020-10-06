@@ -4,5 +4,4 @@ MAINTAINER hexanyn, hexanyn@gmail.com
 
 RUN apk add gcc musl-dev postgresql-libs postgresql-dev
 
-ENTRYPOINT pip3 install -r /data/requirements.txt
-CMD python3 /data/boxbot.py
+ENTRYPOINT bash /data/start.sh
