@@ -12,7 +12,7 @@ class boxbot:
 		self.bot_token = os.environ.get('SLACK_TOKEN')
 		self.bot = slack.RTMClient(token=self.bot_token)
 		self.client = slack.WebClient(self.bot_token)
-		self.private_channel = [os.environ.get('SLACK_CHANNEL'), "D012FT2M6MA"]
+		self.private_channel = [os.environ.get('SLACK_CHANNEL'), "D012FT2M6MA", "D012ZHFNKLY"]
 		self.ensure_slack()
 		self.session = requests.session()
 		self.uribox = "http://{}/ws".format(os.environ.get('BOX_IP'))
