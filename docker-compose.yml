@@ -1,16 +1,20 @@
 version: '2.1'
 services:
   db:
-    image: hexanyn/boxbot_postgres
+    image: postgres:12.1
+    container_name: boxbot_db
     volumes:
     - ./db:/var/lib/postgresql/data
     env_file: boxbot.env
     restart: always
 
   bot:
-    image: hexanyn/boxbot_python
+    image: hexanyn/boxbot
+    container_name: boxbot
     volumes:
     - ./bot:/data
     - /data/dhcp/data:/dhcp
+    depends_on:
+    - db
     env_file: boxbot.env
     restart: always

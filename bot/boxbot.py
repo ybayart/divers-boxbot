@@ -41,11 +41,13 @@ class boxbot:
 		}
 		self.pg = psycopg2.connect(
 			host="db",
-			database="box",
-			user="postgres",
-			password=os.environ.get("PG_PASS")
+			database=os.environ.get("POSTGRES_USER"),
+			user=os.environ.get("POSTGRES_USER"),
+			password=os.environ.get("POSTGRES_PASSWORD")
 		)
 		self.cur = self.pg.cursor()
+		self.cur.execute("CREATE TABLE IF NOT EXISTS mac_filter (addr macaddr unique, name varchar(50) unique, active boolean);")
+		self.pg.commit()
 		self.wrt_token = {"rpi": False, "router": False}
 		slack.RTMClient.run_on(event='message')(self.run)
 		self.bot.start()
