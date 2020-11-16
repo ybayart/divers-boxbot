@@ -4,7 +4,7 @@ MAINTAINER hexanyn, hexanyn@gmail.com
 
 RUN apk add gcc musl-dev postgresql-libs postgresql-dev
 
-RUN pip3 install --no-cache/
+RUN pip3 install --no-cache\
 	requests\
 	slackclient\
 	pygments\
