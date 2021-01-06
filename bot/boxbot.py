@@ -198,7 +198,7 @@ class boxbot:
 			for interface in sorted(devices):
 				for item in devices[interface]:
 					attachments.append(item)
-			self.output('Connected devices', attachments)
+			self.output(f"Connected devices ({len(devices)})", attachments)
 	
 	def dhcp(self):
 		attachments = []
