@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: latin-1 -*-
 
-import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime, re, psycopg2, math
+import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime, re, psycopg2, math, time
 from pygments import highlight
 from pygments.lexers import JsonLexer
 from pygments.formatters import TerminalFormatter
@@ -271,7 +271,7 @@ class boxbot:
 		attachments = []
 		index = 0
 		interfaces = {}
-		for inter in ["Box eth4", "Box wl0", "Router 2.4G", "Router 5G", "OpenWRT"]:
+		for inter in ["Box wl0", "Box eth4", "Router 2.4G", "Router 5G", "OpenWRT"]:
 			interfaces[inter] = {"state": True, "to_del": [], "to_add": []}
 		for entry in self.cur.fetchall():
 			devicesall[entry[0]] = entry[1]
@@ -304,10 +304,10 @@ class boxbot:
 		r = self.reqbox(payload)
 		if not r:
 			self.unable_fetch("Box")
-			interfaces['Box eth4']['state'] = False
 			interfaces['Box wl0']['state'] = False
+			interfaces['Box eth4']['state'] = False
 		else:
-			for interface in ["eth4", "wl0"]:
+			for interface in ["wl0", "eth4"]:
 				attachments = []
 				rtmp = r['wlanvap'][interface]['MACFiltering']['Entry']
 				devicestmp = devices.copy()
@@ -468,10 +468,15 @@ class boxbot:
 			index += 1
 			devices['box'][index] = {'MACAddress': entry[0].upper()}
 			devices['router'][entry[0]] = entry[1]
-		for interface in ['eth4', 'wl0']:
-			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Entry":devices["box"]}}}}}}
-			self.reqbox(payload, check=False)
-			self.output(f"Box ({interface}) updated")
+		self.output("Livebox is limited to 15 devices, automatic update is therefore disabled")
+#		for interface in ['wl0', 'eth4']:
+#			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Entry":devices["box"]}}}}}}
+#			self.reqbox(payload, check=False)
+##			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Mode":"WhiteList"}}}}}}
+##			self.reqbox(payload, check=False)
+##			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"WPS":{"Enable":false}}}}}}
+##			self.reqbox(payload, check=False)
+#			self.output(f"Box ({interface}) updated")
 		payload = {'method': 'set', 'params': ['wireless', '', 'maclist', list(devices['router'].keys())]}
 		for interface in {'Router 2.4G': ['router', 0], 'Router 5G': ['router', 1], 'OpenWRT': ['rpi', 0]}.items():
 			payload['params'][1] = f"default_radio{interface[1][1]}"
