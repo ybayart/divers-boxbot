@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: latin-1 -*-
 
-import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime, re, psycopg2, math, time
+import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime, re, psycopg2, math, time, logging
 from pygments import highlight
 from pygments.lexers import JsonLexer
 from pygments.formatters import TerminalFormatter
@@ -138,6 +138,27 @@ class boxbot:
 
 	def unable_fetch(self, out="Unknown"):
 		self.output(f"Unable to retrieve datas... ({out})")
+	
+	def get_dhcpd(self):
+		with open('/dhcp/dhcpd.conf') as f:
+			dhcpd = f.readlines()
+		in_brackets = False
+		devices = {}
+		for line in dhcpd:
+			if in_brackets == False and "	host " in line:
+				name = "."
+				host = "."
+				addr = "."
+				name = line.split(' ')[1]
+				in_brackets = True
+			elif in_brackets == True and "ethernet" in line:
+				host = line.split(' ')[2][:-2].upper()
+			elif in_brackets == True and "fixed-address" in line:
+				addr = line.split(' ')[1][:-2]
+			elif in_brackets == True and "}" in line:
+				in_brackets = False
+				devices[host] = {'name': name, 'addr': addr}
+		return devices
 
 	# PUBLIC METHOD
 	
@@ -203,6 +224,44 @@ class boxbot:
 			self.output(f"Connected devices ({count_device})", attachments)
 	
 	def dhcp(self):
+		devices = self.get_dhcpd()
+		attachments = []
+		for host in devices:
+			name = devices[host]['name']
+			addr = devices[host]['addr']
+			attachments.append({
+				'blocks': [
+					{
+						'type': 'section',
+						'text': {
+							'type': 'mrkdwn',
+							'text': f"*{name}*"
+						},
+						'fields': [
+							{
+								'type': 'mrkdwn',
+								'text': addr
+							},
+							{
+								'type': 'mrkdwn',
+								'text': host
+							}
+						]
+					}
+				]
+			})
+		self.output("Static address", attachments)
+
+	def dhcp_sync(self):
+		devices = self.get_dhcpd()
+		self.output("Updating {} names...".format(len(devices)))
+		for host in devices:
+			name = devices[host]['name']
+			r = self.reqbox({'service':"Devices.Device.{}".format(host),'method':'setName','parameters':{'name':name}})
+			self.output("{} {}: {}".format(':x:' if not r else ':heavy_check_mark:', host, name))
+		self.output("Update finished")
+
+	def leases(self):
 		attachments = []
 		leases = isc_dhcp_leases.IscDhcpLeases('/dhcp/dhcpd.leases').get_current()
 		for lease in leases:
@@ -237,9 +296,16 @@ class boxbot:
 			self.unable_fetch()
 		else:
 			attachments = []
+			protocols_name = {'6': 'TCP', '17': 'UDP'}
 			for item in r:
 				item = r[item]
 				if not item['SourcePrefix']: item['SourcePrefix'] = '0.0.0.0'
+				protocols = []
+				for protocol in item['Protocol'].split(','):
+					protocols.append({
+						'type': 'mrkdwn',
+						'text': protocols_name[protocol] if protocol in protocols_name else "#{}".format(protocol)
+					})
 				attachments.append({
 					'color': '#00ff00' if item['Enable'] else '#ff0000',
 					'blocks': [
@@ -259,6 +325,10 @@ class boxbot:
 									'text': f"*Destination*\n{item['DestinationIPAddress']}:{item['InternalPort']}"
 								}
 							]
+						},
+						{
+							'type': 'context',
+							'elements': protocols
 						}
 					]
 				})
@@ -489,19 +559,23 @@ class boxbot:
 	
 	def help(self):
 		self.output("""
-`  !who   ` - Show devices connected
-`  !dhcp  ` - Show active dhcp leases
-` !ports  ` - Show port forward
-`  !mac   ` - Show whitelisted mac address
-` !mac_db ` - Manage database
+`   !who   ` - Show devices connected
+`  !dhcp   ` - Show dhcpd configuration (static address)
+`!dhcp_sync`- Synchronise devices names with dhcpd config
+` !leases  ` - Show active dhcp leases
+`  !ports  ` - Show port forward
+`   !mac   ` - Show whitelisted mac address
+` !mac_db  ` - Manage database
 		Usage: `!mac_db [<create|remove|active|disable> <NAME> [MacAddr]]`
-`!mac_sync` - Synchronise hotspot with active devices in database
-`  !help  ` - Display this help
+`!mac_sync ` - Synchronise hotspot with active devices in database
+`  !help   ` - Display this help
 		""")
 	
 	def dispatch(self):
 		if   self.cmd == "who":			self.devices()
 		elif self.cmd == "dhcp":		self.dhcp()
+		elif self.cmd == "dhcp_sync":	self.dhcp_sync()
+		elif self.cmd == "leases":		self.leases()
 		elif self.cmd == "ports":		self.ports()
 		elif self.cmd == "mac":			self.mac()
 		elif self.cmd == "mac_db":		self.mac_db()
@@ -514,11 +588,11 @@ class boxbot:
 		self.data = self.event["data"]
 		if self.is_for_me() == True:
 			try:
-				print(self.line)
 				self.parse_line(self.line)
 				self.dispatch()
 			except Exception as e:
-				print(e)
+				self.output("An error occured, please try again later")
+				logging.error(e)
 
 if __name__ == "__main__":
 	box = boxbot()
