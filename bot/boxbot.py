@@ -555,6 +555,26 @@ class boxbot:
 		for interface in ['router', 'rpi']:
 			self.apply_wrt(interface)
 		self.mac()
+	
+	def wake(self):
+		if len(self.args) < 1:
+			self.output('Missing one or more dhcp name')
+		else:
+			devices = self.get_dhcpd()
+			for arg in self.args:
+				success = False
+				for addr in devices:
+					if devices[addr]['name'] == arg:
+						self.output("Wake up {} ({})".format(arg, addr))
+						r = requests.get("https://endpoints.hexanyn.fr/wakeonlan.php?addr={}".format(addr))
+						if r.status_code == 200:
+							self.output(r.text)
+						else:
+							self.output("Wake on lan endpoints return an error")
+						success = True
+						break
+				if not success:
+					self.output("Device {} not found :(".format(arg))
 
 	
 	def help(self):
@@ -568,6 +588,7 @@ class boxbot:
 ` !mac_db  ` - Manage database
 		Usage: `!mac_db [<create|remove|active|disable> <NAME> [MacAddr]]`
 `!mac_sync ` - Synchronise hotspot with active devices in database
+`  !wake   ` - Turn on device
 `  !help   ` - Display this help
 		""")
 	
@@ -580,6 +601,7 @@ class boxbot:
 		elif self.cmd == "mac":			self.mac()
 		elif self.cmd == "mac_db":		self.mac_db()
 		elif self.cmd == "mac_sync":	self.mac_sync()
+		elif self.cmd == "wake":		self.wake()
 		elif self.cmd == "help":		self.help()
 		elif self.cmd == "info":		self.help()
 	
