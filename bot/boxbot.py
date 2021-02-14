@@ -578,6 +578,10 @@ class boxbot:
 			devices[entry[0].upper()] = {'name': entry[1]}
 		self.update_names(devices)
 	
+	def names_sync(self):
+		self.db_sync()
+		self.dhcp_sync()
+	
 	def wake(self):
 		if len(self.args) < 1:
 			self.output('Missing one or more dhcp name')
@@ -601,18 +605,19 @@ class boxbot:
 	
 	def help(self):
 		self.output("""
-`   !who   ` - Show devices connected
-`  !dhcp   ` - Show dhcpd configuration (static address)
-`!dhcp_sync` - Synchronise device' names with dhcpd config
-` !leases  ` - Show active dhcp leases
-`  !ports  ` - Show port forward
-`   !mac   ` - Show whitelisted mac address
-`!mac_sync ` - Synchronise hotspot with active devices in database
-` !mac_db  ` - Manage database
+`   !who    ` - Show devices connected
+`   !dhcp   ` - Show dhcpd configuration (static address)
+`!dhcp_sync ` - Synchronise device' names with dhcpd config
+`  !leases  ` - Show active dhcp leases
+`  !ports   ` - Show port forward
+`   !mac    ` - Show whitelisted mac address
+` !mac_sync ` - Synchronise hotspot with active devices in database
+`  !mac_db  ` - Manage database
 		Usage: `!mac_db [<create|remove|active|disable> <NAME> [MacAddr]]`
-` !db_sync ` - Synchronise decice' names with mac_db
-`  !wake   ` - Turn on device
-`  !help   ` - Display this help
+` !db_sync  ` - Synchronise device' names with mac_db
+`!names_sync` - launch a db_sync then a dhcp_sync
+`   !wake   ` - Turn on device
+`   !help   ` - Display this help
 		""")
 	
 	def dispatch(self):
@@ -625,6 +630,7 @@ class boxbot:
 		elif self.cmd == "mac_sync":	self.mac_sync()
 		elif self.cmd == "mac_db":		self.mac_db()
 		elif self.cmd == "db_sync":		self.db_sync()
+		elif self.cmd == "names_sync":	self.names_sync()
 		elif self.cmd == "wake":		self.wake()
 		elif self.cmd == "help":		self.help()
 		elif self.cmd == "info":		self.help()
