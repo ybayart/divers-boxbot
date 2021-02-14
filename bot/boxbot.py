@@ -607,14 +607,14 @@ class boxbot:
 		self.output("""
 `   !who    ` - Show devices connected
 `   !dhcp   ` - Show dhcpd configuration (static address)
-`!dhcp_sync ` - Synchronise device' names with dhcpd config
+`!dhcp_sync ` - Synchronize device' names with dhcpd config
 `  !leases  ` - Show active dhcp leases
 `  !ports   ` - Show port forward
 `   !mac    ` - Show whitelisted mac address
-` !mac_sync ` - Synchronise hotspot with active devices in database
+` !mac_sync ` - Synchronize hotspot with active devices in database
 `  !mac_db  ` - Manage database
 		Usage: `!mac_db [<create|remove|active|disable> <NAME> [MacAddr]]`
-` !db_sync  ` - Synchronise device' names with mac_db
+` !db_sync  ` - Synchronize device' names with mac_db
 `!names_sync` - launch a db_sync then a dhcp_sync
 `   !wake   ` - Turn on device
 `   !help   ` - Display this help
