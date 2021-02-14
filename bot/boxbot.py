@@ -90,9 +90,9 @@ class boxbot:
 			attachments=attachments
 		)
 	
-	def reqbox(self, payload={}, check=True):
+	def reqbox(self, payload={}, check=True, timeout=(2, 8)):
 		if not check: self.headers['data']['X-Context'] = self.session.post(self.uribox, headers=self.headers['auth'], json=self.auth_payload).json()['data']['contextID']
-		r = self.session.post(self.uribox, headers=self.headers['data'], json=payload).json()
+		r = self.session.post(self.uribox, headers=self.headers['data'], json=payload, timeout=timeout).json()
 		if check:
 			if r['status'] == None:
 				r = self.session.post(self.uribox, headers=self.headers['auth'], json=self.auth_payload).json()
@@ -159,6 +159,28 @@ class boxbot:
 				in_brackets = False
 				devices[host] = {'name': name, 'addr': addr}
 		return devices
+	
+	def update_names(self, devices={}):
+		payload = {'service': 'Devices', 'method': 'get', 'parameters': {}}
+		r = self.reqbox(payload)
+		known_devices = {}
+		if not r:
+			self.output("unable to fetch")
+		else:
+			for device in r:
+				if device['DiscoverySource'] in ['bridge', 'dhcp']:
+					known_devices[device['Key'].upper()] = device
+		self.output("Updating {} names...".format(len(devices)))
+		for addr in devices:
+			name = devices[addr]['name']
+			if addr in known_devices:
+				r = self.reqbox({'service':"Devices.Device.{}".format(addr),'method':'setName','parameters':{'name':name}})
+				state = ':x:' if not r else ':heavy_check_mark:'
+			else:
+				state = ':interrobang:'
+			self.output("{} {}: {}".format(state, addr, name))
+		self.output("Update finished")
+
 
 	# PUBLIC METHOD
 	
@@ -253,13 +275,7 @@ class boxbot:
 		self.output("Static address", attachments)
 
 	def dhcp_sync(self):
-		devices = self.get_dhcpd()
-		self.output("Updating {} names...".format(len(devices)))
-		for host in devices:
-			name = devices[host]['name']
-			r = self.reqbox({'service':"Devices.Device.{}".format(host),'method':'setName','parameters':{'name':name}})
-			self.output("{} {}: {}".format(':x:' if not r else ':heavy_check_mark:', host, name))
-		self.output("Update finished")
+		self.update_names(self.get_dhcpd())
 
 	def leases(self):
 		attachments = []
@@ -422,14 +438,40 @@ class boxbot:
 			if interfaces[inter]['to_add']: outtmp += f"\n	| to_add: {', '.join(sorted(interfaces[inter]['to_add']))}"
 			out.append(outtmp)
 		self.output("\n".join(out))
+			
+			
+	def mac_sync(self):
+		self.output("Updating hotspots...")
+		self.cur.execute("SELECT * FROM mac_filter WHERE active=True;");
+		index = 0
+		devices = {'box': {}, 'router': {}}
+		for entry in self.cur.fetchall():
+			index += 1
+			devices['box'][index] = {'MACAddress': entry[0].upper()}
+			devices['router'][entry[0]] = entry[1]
+		self.output("Livebox is limited to 15 devices, automatic update is therefore disabled")
+#		for interface in ['wl0', 'eth4']:
+#			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Entry":devices["box"]}}}}}}
+#			self.reqbox(payload, check=False)
+##			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Mode":"WhiteList"}}}}}}
+##			self.reqbox(payload, check=False)
+##			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"WPS":{"Enable":false}}}}}}
+##			self.reqbox(payload, check=False)
+#			self.output(f"Box ({interface}) updated")
+		payload = {'method': 'set', 'params': ['wireless', '', 'maclist', list(devices['router'].keys())]}
+		for interface in {'Router 2.4G': ['router', 0], 'Router 5G': ['router', 1], 'OpenWRT': ['rpi', 0]}.items():
+			payload['params'][1] = f"default_radio{interface[1][1]}"
+			self.reqwrt(interface[1][0], payload)
+			self.output(f"{interface[0]} updated")
+		for interface in ['router', 'rpi']:
+			self.apply_wrt(interface)
+		self.mac()
 	
 	def mac_db(self):
 		if len(self.args) == 0:
 			self.cur.execute("SELECT * FROM mac_filter ORDER BY active DESC, name;");
 			attachments = []
-			index = 0
 			for entry in self.cur.fetchall():
-				index += 1
 				attachments.append({
 					'color': '#00ff00' if entry[2] else '#ff0000',
 					'blocks': [
@@ -527,34 +569,14 @@ class boxbot:
 					print(error)
 					if(self.pg):
 						self.pg.rollback()
-			
-			
-	def mac_sync(self):
-		self.output("Updating hotspots...")
-		self.cur.execute("SELECT * FROM mac_filter WHERE active=True;");
-		index = 0
-		devices = {'box': {}, 'router': {}}
-		for entry in self.cur.fetchall():
-			index += 1
-			devices['box'][index] = {'MACAddress': entry[0].upper()}
-			devices['router'][entry[0]] = entry[1]
-		self.output("Livebox is limited to 15 devices, automatic update is therefore disabled")
-#		for interface in ['wl0', 'eth4']:
-#			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Entry":devices["box"]}}}}}}
-#			self.reqbox(payload, check=False)
-##			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"MACFiltering":{"Mode":"WhiteList"}}}}}}
-##			self.reqbox(payload, check=False)
-##			payload = {"service":f"NeMo.Intf.{interface}","method":"setWLANConfig","parameters":{"mibs":{"wlanvap":{interface:{"WPS":{"Enable":false}}}}}}
-##			self.reqbox(payload, check=False)
-#			self.output(f"Box ({interface}) updated")
-		payload = {'method': 'set', 'params': ['wireless', '', 'maclist', list(devices['router'].keys())]}
-		for interface in {'Router 2.4G': ['router', 0], 'Router 5G': ['router', 1], 'OpenWRT': ['rpi', 0]}.items():
-			payload['params'][1] = f"default_radio{interface[1][1]}"
-			self.reqwrt(interface[1][0], payload)
-			self.output(f"{interface[0]} updated")
-		for interface in ['router', 'rpi']:
-			self.apply_wrt(interface)
-		self.mac()
+
+	def db_sync(self):
+		self.cur.execute("SELECT * FROM mac_filter ORDER BY active DESC, name;");
+		db_devices = self.cur.fetchall()
+		devices = {}
+		for entry in db_devices:
+			devices[entry[0].upper()] = {'name': entry[1]}
+		self.update_names(devices)
 	
 	def wake(self):
 		if len(self.args) < 1:
@@ -581,13 +603,14 @@ class boxbot:
 		self.output("""
 `   !who   ` - Show devices connected
 `  !dhcp   ` - Show dhcpd configuration (static address)
-`!dhcp_sync`- Synchronise devices names with dhcpd config
+`!dhcp_sync` - Synchronise device' names with dhcpd config
 ` !leases  ` - Show active dhcp leases
 `  !ports  ` - Show port forward
 `   !mac   ` - Show whitelisted mac address
+`!mac_sync ` - Synchronise hotspot with active devices in database
 ` !mac_db  ` - Manage database
 		Usage: `!mac_db [<create|remove|active|disable> <NAME> [MacAddr]]`
-`!mac_sync ` - Synchronise hotspot with active devices in database
+` !db_sync ` - Synchronise decice' names with mac_db
 `  !wake   ` - Turn on device
 `  !help   ` - Display this help
 		""")
@@ -599,8 +622,9 @@ class boxbot:
 		elif self.cmd == "leases":		self.leases()
 		elif self.cmd == "ports":		self.ports()
 		elif self.cmd == "mac":			self.mac()
-		elif self.cmd == "mac_db":		self.mac_db()
 		elif self.cmd == "mac_sync":	self.mac_sync()
+		elif self.cmd == "mac_db":		self.mac_db()
+		elif self.cmd == "db_sync":		self.db_sync()
 		elif self.cmd == "wake":		self.wake()
 		elif self.cmd == "help":		self.help()
 		elif self.cmd == "info":		self.help()
