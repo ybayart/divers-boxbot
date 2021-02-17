@@ -2,6 +2,7 @@
 # -*- coding: latin-1 -*-
 
 import requests, json, slack, os, subprocess, isc_dhcp_leases, timeago, datetime, re, psycopg2, math, time, logging
+from threading import Thread
 from pygments import highlight
 from pygments.lexers import JsonLexer
 from pygments.formatters import TerminalFormatter
@@ -39,6 +40,15 @@ class boxbot:
 				'password': os.environ.get('BOX_PASS')
 			}
 		}
+		self.dns_base = """$ttl 3600
+home.	IN	SOA	yann5.	yann5.hexanyn.fr. (
+		1606534703
+		3600
+		3600
+		3600
+		3600 )
+home.	IN	NS	yann5.
+"""
 		self.pg = psycopg2.connect(
 			host="db",
 			database=os.environ.get("POSTGRES_USER"),
@@ -164,22 +174,29 @@ class boxbot:
 		payload = {'service': 'Devices', 'method': 'get', 'parameters': {}}
 		r = self.reqbox(payload)
 		known_devices = {}
+		status = {'good': [], 'bad': [], 'unknown': []}
+		assoc = {'good': ':heavy_check_mark:', 'bad': ':x:', 'unknown': ':interrobang:'}
 		if not r:
 			self.output("unable to fetch")
 		else:
 			for device in r:
-				if device['DiscoverySource'] in ['bridge', 'dhcp']:
+				if device['DiscoverySource'] in ['bridge', 'dhcp', 'import']:
 					known_devices[device['Key'].upper()] = device
 		self.output("Updating {} names...".format(len(devices)))
 		for addr in devices:
 			name = devices[addr]['name']
 			if addr in known_devices:
 				r = self.reqbox({'service':"Devices.Device.{}".format(addr),'method':'setName','parameters':{'name':name}})
-				state = ':x:' if not r else ':heavy_check_mark:'
+				state = 'bad' if not r else 'good'
 			else:
-				state = ':interrobang:'
-			self.output("{} {}: {}".format(state, addr, name))
-		self.output("Update finished")
+				state = 'unknown'
+			status[state].append(name)
+		output = []
+		for state in status:
+			if len(status[state]) > 0:
+				output.append("{} {}".format(assoc[state], ', '.join(status[state])))
+		if len(output) > 0:
+			self.output('\n'.join(output))
 
 
 	# PUBLIC METHOD
@@ -601,6 +618,53 @@ class boxbot:
 						break
 				if not success:
 					self.output("Device {} not found :(".format(arg))
+	
+	def dns_sync(self):
+		self.output("Updating zonefile")
+		dhcp = self.get_dhcpd()
+		f = open('/dns/home.hosts', 'w')
+		f.write(self.dns_base)
+		for host in dhcp:
+			addr = dhcp[host]['addr']
+			if addr != '.':
+				f.write("{}.home.	IN	A	{}\n".format(dhcp[host]['name'], dhcp[host]['addr']))
+		f.close()
+		r = requests.get("https://endpoints.hexanyn.fr/dns.php?action=restart")
+		if r.status_code == 200:
+			self.output(r.text)
+		else:
+			self.output("Dns endpoints return an error")
+		time.sleep(60)
+		r = requests.get("https://endpoints.hexanyn.fr/dns.php?action=merge")
+		if r.status_code == 200:
+			self.output(r.text)
+		else:
+			self.output("Dns endpoints return an error")
+	
+	def grub(self):
+		actions = ['get', 'set']
+		if (len(self.args) <= 1 or self.args[1] not in actions or
+			(len(self.args) >= 3 and not self.args[2].isnumeric())):
+			self.output('Usage: `!grub <NAME> <get/set> [#ID]`')
+		else:
+			devices = self.get_dhcpd()
+			name = self.args[0]
+			action = self.args[1]
+			number = self.args[2] if len(self.args) >= 3 else False
+			device = False
+			for addr in devices:
+				if devices[addr]['name'] == name:
+					device = devices[addr]
+					break
+			if device:
+				params = {'action': action}
+				if action == 'set':
+					params['id'] = self.args[2]
+				r = requests.get("http://{}:42666".format(device['addr']), params=params, timeout=3)
+				self.output('```' + r.text + '```' if action == 'get' else 'Rebooting')
+			else:
+				self.output('Unknown device :(')
+			
 
 	
 	def help(self):
@@ -617,34 +681,39 @@ class boxbot:
 ` !db_sync  ` - Synchronize device' names with mac_db
 `!names_sync` - launch a db_sync then a dhcp_sync
 `   !wake   ` - Turn on device
+` !dns_sync ` - Update dns with dhcp names (DHCP.home)
+`   !grub   ` - Grub reboot ;)
 `   !help   ` - Display this help
 		""")
 	
 	def dispatch(self):
-		if   self.cmd == "who":			self.devices()
-		elif self.cmd == "dhcp":		self.dhcp()
-		elif self.cmd == "dhcp_sync":	self.dhcp_sync()
-		elif self.cmd == "leases":		self.leases()
-		elif self.cmd == "ports":		self.ports()
-		elif self.cmd == "mac":			self.mac()
-		elif self.cmd == "mac_sync":	self.mac_sync()
-		elif self.cmd == "mac_db":		self.mac_db()
-		elif self.cmd == "db_sync":		self.db_sync()
-		elif self.cmd == "names_sync":	self.names_sync()
-		elif self.cmd == "wake":		self.wake()
-		elif self.cmd == "help":		self.help()
-		elif self.cmd == "info":		self.help()
+		try:
+			if   self.cmd == "who":			self.devices()
+			elif self.cmd == "dhcp":		self.dhcp()
+			elif self.cmd == "dhcp_sync":	self.dhcp_sync()
+			elif self.cmd == "leases":		self.leases()
+			elif self.cmd == "ports":		self.ports()
+			elif self.cmd == "mac":			self.mac()
+			elif self.cmd == "mac_sync":	self.mac_sync()
+			elif self.cmd == "mac_db":		self.mac_db()
+			elif self.cmd == "db_sync":		self.db_sync()
+			elif self.cmd == "names_sync":	self.names_sync()
+			elif self.cmd == "wake":		self.wake()
+			elif self.cmd == "dns_sync":	self.dns_sync()
+			elif self.cmd == "grub":		self.grub()
+			elif self.cmd == "help":		self.help()
+			elif self.cmd == "info":		self.help()
+		except Exception as e:
+			self.output("An error occured, please try again later")
+			logging.error(e)
 	
 	def run(self, **event):
 		self.event = event
 		self.data = self.event["data"]
 		if self.is_for_me() == True:
-			try:
-				self.parse_line(self.line)
-				self.dispatch()
-			except Exception as e:
-				self.output("An error occured, please try again later")
-				logging.error(e)
+			self.parse_line(self.line)
+			thread = Thread(target = self.dispatch)
+			thread.start()
 
 if __name__ == "__main__":
 	box = boxbot()
