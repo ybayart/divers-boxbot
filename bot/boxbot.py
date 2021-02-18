@@ -40,14 +40,16 @@ class boxbot:
 				'password': os.environ.get('BOX_PASS')
 			}
 		}
-		self.dns_base = """$ttl 3600
-home.	IN	SOA	yann5.	yann5.hexanyn.fr. (
+		self.dns_base = """$ORIGIN home.
+$TTL 3600
+@		IN	SOA	yann5.	yann5.hexanyn.fr. (
 		1606534703
 		3600
 		3600
 		3600
 		3600 )
-home.	IN	NS	yann5.
+		IN	NS	yann5.
+
 """
 		self.pg = psycopg2.connect(
 			host="db",
@@ -627,7 +629,7 @@ home.	IN	NS	yann5.
 		for host in dhcp:
 			addr = dhcp[host]['addr']
 			if addr != '.':
-				f.write("{}.home.	IN	A	{}\n".format(dhcp[host]['name'], dhcp[host]['addr']))
+				f.write("{}	IN	A	{}\n".format(dhcp[host]['name'], dhcp[host]['addr']))
 		f.close()
 		r = requests.get("https://endpoints.hexanyn.fr/dns.php?action=restart")
 		if r.status_code == 200:
@@ -642,26 +644,24 @@ home.	IN	NS	yann5.
 			self.output("Dns endpoints return an error")
 	
 	def grub(self):
-		actions = ['get', 'set']
-		if (len(self.args) <= 1 or self.args[1] not in actions or
-			(len(self.args) >= 3 and not self.args[2].isnumeric())):
-			self.output('Usage: `!grub <NAME> <get/set> [#ID]`')
+		if (len(self.args) <= 0 or
+			(len(self.args) >= 2 and not self.args[1].isnumeric())):
+			self.output('Usage: `!grub <NAME> [#ID]`')
 		else:
 			devices = self.get_dhcpd()
 			name = self.args[0]
-			action = self.args[1]
-			number = self.args[2] if len(self.args) >= 3 else False
+			number = self.args[1] if len(self.args) >= 2 else False
 			device = False
 			for addr in devices:
 				if devices[addr]['name'] == name:
 					device = devices[addr]
 					break
 			if device:
-				params = {'action': action}
-				if action == 'set':
-					params['id'] = self.args[2]
+				params = {'action': 'get' if not number else 'set'}
+				if params['action'] == 'set':
+					params['id'] = self.args[1]
 				r = requests.get("http://{}:42666".format(device['addr']), params=params, timeout=3)
-				self.output('```' + r.text + '```' if action == 'get' else 'Rebooting')
+				self.output('```' + r.text + '```' if params['action'] == 'get' else 'Rebooting')
 			else:
 				self.output('Unknown device :(')
 			
