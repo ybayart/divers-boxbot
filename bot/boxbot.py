@@ -75,12 +75,15 @@ $TTL 3600
 			self.__init__()
 	
 	def parse_line(self, line):
-		args = self.line[1:].strip().split(' ')
+		args = line[1:].strip().split(' ')
 		self.cmd = args[0].lower()
 		self.args = args[1:]
 	
 	def is_for_me(self):
-		if self.data["text"] and self.data["blocks"][0]["elements"][0]["elements"][0]["text"]: self.line = " ".join(self.data["blocks"][0]["elements"][0]["elements"][0]["text"].split())
+		self.line = []
+		for elem in self.data['blocks'][0]['elements'][0]['elements']:
+			self.line.append(elem['text'].strip())
+		self.line = ' '.join(self.line)
 		if (not (self.data.get("bot_id")) and
 			self.data["text"] and
 			self.line[0] == "!" and
@@ -664,6 +667,13 @@ $TTL 3600
 				self.output('```' + r.text + '```' if params['action'] == 'get' else 'Rebooting')
 			else:
 				self.output('Unknown device :(')
+	
+	def nmap(self):
+		params = {'command': ' '.join(self.args)}
+		self.output("Launching command `nmap {}`".format(params['command']))
+		r = requests.get('https://endpoints.hexanyn.fr/nmap.php', params=params)
+		self.output('```' + r.text + '```')
+
 			
 
 	
@@ -683,6 +693,7 @@ $TTL 3600
 `   !wake   ` - Turn on device
 ` !dns_sync ` - Update dns with dhcp names (DHCP.home)
 `   !grub   ` - Grub reboot ;)
+`   !nmap   ` - Launch an nmap command
 `   !help   ` - Display this help
 		""")
 	
@@ -701,6 +712,7 @@ $TTL 3600
 			elif self.cmd == "wake":		self.wake()
 			elif self.cmd == "dns_sync":	self.dns_sync()
 			elif self.cmd == "grub":		self.grub()
+			elif self.cmd == "nmap":		self.nmap()
 			elif self.cmd == "help":		self.help()
 			elif self.cmd == "info":		self.help()
 		except Exception as e:
