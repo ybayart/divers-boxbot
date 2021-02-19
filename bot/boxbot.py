@@ -207,65 +207,76 @@ $TTL 3600
 	# PUBLIC METHOD
 	
 	def devices(self):
-		payload = {'service': 'Devices', 'method': 'get', 'parameters': {'expression': {'ETHERNET': 'not interface and not self and eth and .Active==true', 'WIFI': 'not interface and not self and wifi and .Active==true'}}}
+		payload = {'service': 'Devices', 'method': 'get', 'parameters': {'expression': {'ALL': 'not interface and not self and (eth or wifi) and .Active==true'}}}
 		r = self.reqbox(payload)
 		if not r:
 			self.unable_fetch()
 		else:
 			attachments = []
 			leases = isc_dhcp_leases.IscDhcpLeases('/dhcp/dhcpd.leases').get_current()
+			dhcpd = self.get_dhcpd()
+			dhcp = {}
+			for lease in leases:
+				dhcp[leases[lease].ethernet.lower()] = leases[lease].ip
+			for entry in dhcpd:
+				dhcp[entry.lower()] = dhcpd[entry]['addr']
 			devices = {}
-			for interface in r:
-				for item in r[interface]:
-					if item['PhysAddress'].lower() in leases or item['IPAddress']:
-						lease = leases[item['PhysAddress'].lower()] if item['PhysAddress'].lower() in leases else None
-						if item['InterfaceName'] not in devices: devices[item['InterfaceName']] = []
-						firstseen = timeago.format(datetime.datetime.strptime(item['FirstSeen'], "%Y-%m-%dT%H:%M:%SZ"), datetime.datetime.now())
-						lastseen = timeago.format(datetime.datetime.strptime(item['LastConnection'], "%Y-%m-%dT%H:%M:%SZ"), datetime.datetime.now())
-						devices[item['InterfaceName']].append({
-							'blocks': [
-								{
-									'type': 'section',
-									'text': {
-										'type': 'mrkdwn',
-										'text': f"*{item['Name']}*"
-									},
-									'fields': [
-										{
-											'type': 'mrkdwn',
-											'text': lease.ip if lease else item['IPAddress']
-										},
-										{
-											'type': 'mrkdwn',
-											'text': item['PhysAddress']
-										},
-										{
-											'type': 'mrkdwn',
-											'text': item['InterfaceName']
-										}
-									]
+			for item in r['ALL']:
+				if item['PhysAddress'].lower() in dhcp or item['IPAddress']:
+					ip = dhcp[item['PhysAddress'].lower()] if item['PhysAddress'].lower() in dhcp else item['IPAddress']
+					if len(self.args) > 0 and self.args[0] in item:
+						sorting_key = item[self.args[0]]
+					else:
+						sorting_key = ip
+					if sorting_key not in devices: devices[sorting_key] = []
+					firstseen = timeago.format(datetime.datetime.strptime(item['FirstSeen'], "%Y-%m-%dT%H:%M:%SZ"), datetime.datetime.now())
+					lastseen = timeago.format(datetime.datetime.strptime(item['LastConnection'], "%Y-%m-%dT%H:%M:%SZ"), datetime.datetime.now())
+					devices[sorting_key].append({
+						'blocks': [
+							{
+								'type': 'section',
+								'text': {
+									'type': 'mrkdwn',
+									'text': f"*{item['Name']}*"
 								},
-								{
-									'type': 'context',
-									'elements': [
-										{
-											'type': 'mrkdwn',
-											'text': 'First: {}'.format(firstseen)
-										},
-										{
-											'type': 'mrkdwn',
-											'text': 'Last: {}'.format(lastseen)
-										}
-									]
-								}
-							]
-						})
+								'fields': [
+									{
+										'type': 'mrkdwn',
+										'text': ip
+									},
+									{
+										'type': 'mrkdwn',
+										'text': item['PhysAddress']
+									},
+									{
+										'type': 'mrkdwn',
+										'text': item['InterfaceName']
+									}
+								]
+							},
+							{
+								'type': 'context',
+								'elements': [
+									{
+										'type': 'mrkdwn',
+										'text': 'First: {}'.format(firstseen)
+									},
+									{
+										'type': 'mrkdwn',
+										'text': 'Last: {}'.format(lastseen)
+									}
+								]
+							}
+						]
+					})
+				else:
+					self.output("Unknown device {} ({}) :(".format(item['Name'], item['PhysAddress']))
 			count_device = 0
-			for interface in sorted(devices):
-				for item in devices[interface]:
+			for index in sorted(devices):
+				for item in devices[index]:
 					attachments.append(item)
 					count_device += 1
-			self.output(f"Connected devices ({count_device})", attachments)
+			self.output(f"*{count_device}* connected devices (you can also sort by `Name`, `InterfaceName`)", attachments)
 	
 	def dhcp(self):
 		devices = self.get_dhcpd()
