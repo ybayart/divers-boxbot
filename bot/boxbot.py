@@ -105,12 +105,12 @@ $TTL 3600
 			attachments=attachments
 		)
 	
-	def reqbox(self, payload={}, check=True, timeout=(2, 8)):
+	def reqbox(self, payload={}, check=True, timeout=10):
 		if not check: self.headers['data']['X-Context'] = self.session.post(self.uribox, headers=self.headers['auth'], json=self.auth_payload).json()['data']['contextID']
 		r = self.session.post(self.uribox, headers=self.headers['data'], json=payload, timeout=timeout).json()
 		if check:
 			if r['status'] == None:
-				r = self.session.post(self.uribox, headers=self.headers['auth'], json=self.auth_payload).json()
+				r = self.session.post(self.uribox, headers=self.headers['auth'], json=self.auth_payload, timeout=timeout).json()
 				if r['status'] != 0:
 					return False
 				else:
@@ -121,8 +121,8 @@ $TTL 3600
 		else:
 			return False
 	
-	def reqwrt(self, uri='router', payload={}):
-		r = requests.get(f"{self.uriwrt[uri]}/uci?auth={self.wrt_token[uri]}", json=payload)
+	def reqwrt(self, uri='router', payload={}, timeout=10):
+		r = requests.get(f"{self.uriwrt[uri]}/uci?auth={self.wrt_token[uri]}", json=payload, timeout=timeout)
 		if r.status_code == 200:
 			return r.json()['result']
 		else:
@@ -134,7 +134,7 @@ $TTL 3600
 				self.connect_wrt(uri)
 				return self.reqwrt(uri, payload)
 
-	def connect_wrt(self, uri):
+	def connect_wrt(self, uri, timeout=10):
 		payload = {
 			'id': 1,
 			'method': 'login',
@@ -143,7 +143,7 @@ $TTL 3600
 				os.environ.get(f"{uri.upper()}_PASS")
 			]
 		}
-		r = requests.get("{}/auth".format(self.uriwrt[uri]), json=payload)
+		r = requests.get("{}/auth".format(self.uriwrt[uri]), json=payload, timeout=timeout)
 		if r.status_code == 200:
 			self.wrt_token[uri] = r.json()['result']
 	
@@ -433,8 +433,8 @@ $TTL 3600
 					interfaces[f"Box {interface}"]['state'] = False
 					interfaces[f"Box {interface}"]['to_add'].extend(devicestmp.values())
 
-		for interface in {'Router 2.4G': ['router', 0], 'Router 5G': ['router', 1], 'OpenWRT': ['rpi', 0]}.items():
-			payload = {'method': 'get', 'params': ['wireless', f"default_radio{interface[1][1]}", 'maclist']}
+		for interface in {'Router 2.4G': ['router', 'wifinet0'], 'Router 5G': ['router', 'wifinet1'], 'OpenWRT': ['rpi', 'default_radio0']}.items():
+			payload = {'method': 'get', 'params': ['wireless', interface[1][1], 'maclist']}
 			r = self.reqwrt(interface[1][0], payload)
 			if not r:
 				self.unable_fetch(interface[0])
@@ -481,8 +481,8 @@ $TTL 3600
 ##			self.reqbox(payload, check=False)
 #			self.output(f"Box ({interface}) updated")
 		payload = {'method': 'set', 'params': ['wireless', '', 'maclist', list(devices['router'].keys())]}
-		for interface in {'Router 2.4G': ['router', 0], 'Router 5G': ['router', 1], 'OpenWRT': ['rpi', 0]}.items():
-			payload['params'][1] = f"default_radio{interface[1][1]}"
+		for interface in {'Router 2.4G': ['router', 'wifinet0'], 'Router 5G': ['router', 'wifinet1'], 'OpenWRT': ['rpi', 'default_radio0']}.items():
+			payload['params'][1] = interface[1][1]
 			self.reqwrt(interface[1][0], payload)
 			self.output(f"{interface[0]} updated")
 		for interface in ['router', 'rpi']:
