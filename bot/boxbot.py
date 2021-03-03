@@ -40,17 +40,6 @@ class boxbot:
 				'password': os.environ.get('BOX_PASS')
 			}
 		}
-		self.dns_base = """$ORIGIN home.
-$TTL 3600
-@		IN	SOA	yann5.	yann5.hexanyn.fr. (
-		1606534703
-		3600
-		3600
-		3600
-		3600 )
-		IN	NS	yann5.
-
-"""
 		self.pg = psycopg2.connect(
 			host="db",
 			database=os.environ.get("POSTGRES_USER"),
@@ -227,7 +216,7 @@ $TTL 3600
 					if len(self.args) > 0 and self.args[0] in item:
 						sorting_key = item[self.args[0]]
 					else:
-						sorting_key = ip
+						sorting_key = int(ip.replace('.', ''))
 					if sorting_key not in devices: devices[sorting_key] = []
 					firstseen = timeago.format(datetime.datetime.strptime(item['FirstSeen'], "%Y-%m-%dT%H:%M:%SZ"), datetime.datetime.now())
 					lastseen = timeago.format(datetime.datetime.strptime(item['LastConnection'], "%Y-%m-%dT%H:%M:%SZ"), datetime.datetime.now())
@@ -638,13 +627,17 @@ $TTL 3600
 	def dns_sync(self):
 		self.output("Updating zonefile")
 		dhcp = self.get_dhcpd()
-		f = open('/dns/home.hosts', 'w')
-		f.write(self.dns_base)
+		subprocess.call('cp /dns/home.hosts.base /dns/home.hosts', shell=True)
+		subprocess.call('cp /dns/1.168.192.in-addr.arpa.base /dns/1.168.192.in-addr.arpa', shell=True)
+		f_dns = open('/dns/home.hosts', 'a')
+		f_reverse = open('/dns/1.168.192.in-addr.arpa', 'a')
 		for host in dhcp:
 			addr = dhcp[host]['addr']
 			if addr != '.':
-				f.write("{}	IN	A	{}\n".format(dhcp[host]['name'], dhcp[host]['addr']))
-		f.close()
+				f_dns.write("{}	IN	A	{}\n".format(dhcp[host]['name'], dhcp[host]['addr']))
+				f_reverse.write("{}	IN	PTR	{}.home.\n".format(dhcp[host]['addr'].split('.')[-1], dhcp[host]['name']))
+		f_dns.close()
+		f_reverse.close()
 		r = requests.get("https://endpoints.hexanyn.fr/dns.php?action=restart")
 		if r.status_code == 200:
 			self.output(r.text)
@@ -685,7 +678,38 @@ $TTL 3600
 		r = requests.get('https://endpoints.hexanyn.fr/nmap.php', params=params)
 		self.output('```' + r.text + '```')
 
+	def shutdown(self):
+		if len(self.args) <= 0:
+			self.output('Usage: `!shutdown <NAME>`')
+		else:
+			devices = self.get_dhcpd()
+			name = self.args[0]
+			device = False
+			for addr in devices:
+				if devices[addr]['name'] == name:
+					device = devices[addr]
+					break
+			if device:
+				params = {'action': 'shutdown'}
+				linux = False
+				windows = False
+				try:
+					r = requests.get("http://{}:42666".format(device['addr']), params=params, timeout=3)
+					linux = True
+#				except requests.exception.Timeout:
+#					self.output('Linux mode failed for {}'.format(device['host']))
+#				if not linux:
+#					try:
+#						r = requests.get("https://endpoints.hexanyn.fr/win_shutdown.php?addr={}".format(device['addr']), params=params, timeout=3)
+#						windows = True
+#					except requests.exceptions.Timeout:
+#						self.output('Windows mode failed for {}, sorry'.format(device['host']))
+				if linux or windows:
+					self.output('Device powered off')
+			else:
+				self.output('Unknown device :(')
 			
+		
 
 	
 	def help(self):
@@ -704,6 +728,7 @@ $TTL 3600
 `   !wake   ` - Turn on device
 ` !dns_sync ` - Update dns with dhcp names (DHCP.home)
 `   !grub   ` - Grub reboot ;)
+` !shutdown ` - Power off device
 `   !nmap   ` - Launch an nmap command
 `   !help   ` - Display this help
 		""")
@@ -724,6 +749,7 @@ $TTL 3600
 			elif self.cmd == "dns_sync":	self.dns_sync()
 			elif self.cmd == "grub":		self.grub()
 			elif self.cmd == "nmap":		self.nmap()
+			elif self.cmd == "shutdown":	self.shutdown()
 			elif self.cmd == "help":		self.help()
 			elif self.cmd == "info":		self.help()
 		except Exception as e:
