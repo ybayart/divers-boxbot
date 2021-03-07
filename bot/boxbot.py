@@ -696,8 +696,8 @@ class boxbot:
 				try:
 					r = requests.get("http://{}:42666".format(device['addr']), params=params, timeout=3)
 					linux = True
-#				except requests.exception.Timeout:
-#					self.output('Linux mode failed for {}'.format(device['host']))
+				except:
+					self.output('Linux mode failed for {}'.format(device['host']))
 #				if not linux:
 #					try:
 #						r = requests.get("https://endpoints.hexanyn.fr/win_shutdown.php?addr={}".format(device['addr']), params=params, timeout=3)
