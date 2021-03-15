@@ -11,6 +11,6 @@ RUN pip3 install --no-cache\
 	isc_dhcp_leases\
 	timeago\
 	psycopg2\
-	openssh-keygen
+	openssh
 
 ENTRYPOINT sh /data/start.sh
