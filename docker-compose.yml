@@ -15,6 +15,7 @@ services:
     - ./bot:/data
     - /data/dhcp/data:/dhcp
     - /data/bind9/bind/lib:/dns
+    - /data/ssh/config/.ssh/authorized_keys:/ssh/authorized_keys
     depends_on:
     - db
     env_file: boxbot.env

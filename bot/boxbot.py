@@ -48,6 +48,7 @@ class boxbot:
 		)
 		self.cur = self.pg.cursor()
 		self.cur.execute("CREATE TABLE IF NOT EXISTS mac_filter (addr macaddr unique, name varchar(50) unique, active boolean);")
+		self.cur.execute("CREATE TABLE IF NOT EXISTS authorized_keys (key text unique, name varchar(50) unique, fingerprint text unique, active boolean);")
 		self.pg.commit()
 		self.wrt_token = {"rpi": False, "router": False}
 		slack.RTMClient.run_on(event='message')(self.run)
@@ -709,6 +710,118 @@ class boxbot:
 			else:
 				self.output('Unknown device :(')
 			
+	def ssh(self):
+		if len(self.args) == 0:
+			self.cur.execute("SELECT * FROM authorized_keys ORDER BY active DESC, name;");
+			attachments = []
+			f = open('/ssh/authorized_keys', 'w')
+			for entry in self.cur.fetchall():
+				attachments.append({
+					'color': '#00ff00' if entry[3] else '#ff0000',
+					'blocks': [
+						{
+							'type': 'section',
+							'fields': [
+								{
+									'type': 'mrkdwn',
+									'text': f"{entry[1]}"
+								},
+								{
+									'type': 'mrkdwn',
+									'text': f"{entry[2]}"
+								}
+							]
+						}
+					]
+				})
+				if entry[3]:
+					f.write('# ' + entry[1] + '\n')
+					f.write(entry[0] + '\n\n')
+			f.close()
+			self.output('Saved ssh keys', attachments)
+		elif self.args[0] in ["create", "add", "new"]:
+			if len(self.args) < 3:
+				self.output("Missing args")
+			else:
+				try:
+					f_name = "/tmp/{}".format(datetime.datetime.now().timestamp())
+					f = open(f_name, 'w')
+					f.write(' '.join(self.args[2:]))
+					f.close()
+					finger = subprocess.check_output(['ssh-keygen', '-E', 'sha256', '-lf', f_name]).decode('utf-8')
+					postgres_insert_query = """ INSERT INTO authorized_keys (name, key, fingerprint, active) VALUES (%s,%s,%s,True)"""
+					record_to_insert = (self.args[1], ' '.join(self.args[2:]), finger)
+					self.cur.execute(postgres_insert_query, record_to_insert)
+
+					self.pg.commit()
+					self.args = []
+					self.ssh()
+
+				except (Exception, psycopg2.Error) as error:
+					self.output("An error occured when creating")
+					print(error)
+					if(self.pg):
+						self.pg.rollback()
+		elif self.args[0] in ["remove", "delete", "rm", "del"]:
+			if len(self.args) < 2:
+				self.output("Missing args")
+			else:
+				try:
+					postgres_insert_query = """ DELETE FROM authorized_keys WHERE name=%s """
+					records = []
+					for arg in self.args[1:]:
+						records.append([arg])
+					self.cur.executemany(postgres_insert_query, records)
+
+					self.pg.commit()
+					self.args = []
+					self.ssh()
+
+				except (Exception, psycopg2.Error) as error:
+					self.output("An error occured when deleting")
+					print(error)
+					if(self.pg):
+						self.pg.rollback()
+		elif self.args[0] in ["enable", "active", "on"]:
+			if len(self.args) < 2:
+				self.output("Missing args")
+			else:
+				try:
+					postgres_insert_query = """ UPDATE authorized_keys SET active=True WHERE active=False AND name=%s """
+					records = []
+					for arg in self.args[1:]:
+						records.append([arg])
+					self.cur.executemany(postgres_insert_query, records)
+
+					self.pg.commit()
+					self.args = []
+					self.ssh()
+
+				except (Exception, psycopg2.Error) as error:
+					self.output("An error occured when updating")
+					print(error)
+					if(self.pg):
+						self.pg.rollback()
+		elif self.args[0] in ["disable", "off"]:
+			if len(self.args) < 2:
+				self.output("Missing args")
+			else:
+				try:
+					postgres_insert_query = """ UPDATE authorized_keys SET active=False WHERE active=True AND name=%s """
+					records = []
+					for arg in self.args[1:]:
+						records.append([arg])
+					self.cur.executemany(postgres_insert_query, records)
+
+					self.pg.commit()
+					self.args = []
+					self.ssh()
+
+				except (Exception, psycopg2.Error) as error:
+					self.output("An error occured when updating")
+					print(error)
+					if(self.pg):
+						self.pg.rollback()
 		
 
 	
@@ -730,6 +843,8 @@ class boxbot:
 `   !grub   ` - Grub reboot ;)
 ` !shutdown ` - Power off device
 `   !nmap   ` - Launch an nmap command
+`   !ssh    ` - Manage ssh keys
+		Usage: `!ssh [<create|remove|active|disable> <NAME> [public key]]`
 `   !help   ` - Display this help
 		""")
 	
@@ -750,6 +865,7 @@ class boxbot:
 			elif self.cmd == "grub":		self.grub()
 			elif self.cmd == "nmap":		self.nmap()
 			elif self.cmd == "shutdown":	self.shutdown()
+			elif self.cmd == "ssh":			self.ssh()
 			elif self.cmd == "help":		self.help()
 			elif self.cmd == "info":		self.help()
 		except Exception as e:
