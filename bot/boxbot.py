@@ -592,6 +592,8 @@ class boxbot:
 					print(error)
 					if(self.pg):
 						self.pg.rollback()
+		else:
+			self.output('Usage: `!mac_db [<create|remove|active|disable> <NAME> [MacAddr]]`')
 
 	def db_sync(self):
 		self.cur.execute("SELECT * FROM mac_filter ORDER BY active DESC, name;");
@@ -711,7 +713,7 @@ class boxbot:
 				self.output('Unknown device :(')
 			
 	def ssh(self):
-		if len(self.args) == 0:
+		if len(self.args) == 0 or self.args[0] in ['update', 'refresh']:
 			self.cur.execute("SELECT * FROM authorized_keys ORDER BY active DESC, name;");
 			attachments = []
 			f = open('/ssh/authorized_keys', 'w')
@@ -738,7 +740,9 @@ class boxbot:
 					f.write('# ' + entry[1] + '\n')
 					f.write(entry[0] + '\n\n')
 			f.close()
-			self.output('Saved ssh keys', attachments)
+			self.output(':white_check_mark: `authorized_keys` file recreated')
+			if len(self.args) == 0:
+				self.output('Saved ssh keys', attachments)
 		elif self.args[0] in ["create", "add", "new"]:
 			if len(self.args) < 3:
 				self.output("Missing args")
@@ -822,6 +826,9 @@ class boxbot:
 					print(error)
 					if(self.pg):
 						self.pg.rollback()
+		else:
+			self.output('Usage: `!ssh [<create|remove|active|disable> <NAME> [public key]]`')
+		
 		
 
 	
