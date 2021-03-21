@@ -13,7 +13,7 @@ class boxbot:
 		self.bot_token = os.environ.get('SLACK_TOKEN')
 		self.bot = slack.RTMClient(token=self.bot_token)
 		self.client = slack.WebClient(self.bot_token)
-		self.private_channel = [os.environ.get('SLACK_CHANNEL'), "D012FT2M6MA", "D012ZHFNKLY"]
+		self.private_channel = os.environ.get('SLACK_CHANNEL').split(',')
 		self.ensure_slack()
 		self.session = requests.session()
 		self.uribox = "http://{}/ws".format(os.environ.get('BOX_IP'))
@@ -716,7 +716,7 @@ class boxbot:
 		if len(self.args) == 0 or self.args[0] in ['update', 'refresh']:
 			self.cur.execute("SELECT * FROM authorized_keys ORDER BY active DESC, name;");
 			attachments = []
-			f = open('/ssh/authorized_keys', 'w')
+			f = open('/ssh/.ssh/authorized_keys', 'w')
 			for entry in self.cur.fetchall():
 				attachments.append({
 					'color': '#00ff00' if entry[3] else '#ff0000',
