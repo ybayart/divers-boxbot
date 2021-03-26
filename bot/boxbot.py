@@ -641,17 +641,23 @@ class boxbot:
 				f_reverse.write("{}	IN	PTR	{}.home.\n".format(dhcp[host]['addr'].split('.')[-1], dhcp[host]['name']))
 		f_dns.close()
 		f_reverse.close()
-		r = requests.get("https://endpoints.hexanyn.fr/dns.php?action=restart")
+		self.output('.home file updated')
+		r = requests.get("https://endpoints.hexanyn.fr/dns.php?action=update")
+		if r.status_code == 200:
+			self.output('Blocked file updated')
+		else:
+			self.output('Unable to update blocked file')
+		r = requests.get('https://endpoints.hexanyn.fr/dns.php?action=restart')
 		if r.status_code == 200:
 			self.output(r.text)
 		else:
-			self.output("Dns endpoints return an error")
-		time.sleep(60)
-		r = requests.get("https://endpoints.hexanyn.fr/dns.php?action=merge")
+			self.output('Unable to restart yann5 dns')
+		time.sleep(30)
+		r = requests.get('https://endpoints.hexanyn.fr/dns.php?action=merge')
 		if r.status_code == 200:
 			self.output(r.text)
 		else:
-			self.output("Dns endpoints return an error")
+			self.output('Unable to restart dedibox dns')
 	
 	def grub(self):
 		if (len(self.args) <= 0 or

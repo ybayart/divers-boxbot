@@ -14,7 +14,7 @@ services:
     volumes:
     - ./bot:/data
     - /data/dhcp/data:/dhcp
-    - /data/bind9/bind/lib:/dns
+    - /data/bind9/lib:/dns
     - /data/ssh/config:/ssh
     depends_on:
     - db
