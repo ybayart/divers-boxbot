@@ -186,12 +186,14 @@ class boxbot:
 			else:
 				state = 'unknown'
 			status[state].append(name)
+		to_remove = [ device for device in known_devices if known_devices[device]['Name'] != device and device not in devices]
 		output = []
 		for state in status:
 			if len(status[state]) > 0:
 				output.append("{} {}".format(assoc[state], ', '.join(status[state])))
 		if len(output) > 0:
 			self.output('\n'.join(output))
+		return to_remove
 
 
 	# PUBLIC METHOD
@@ -298,7 +300,7 @@ class boxbot:
 		self.output("Static address", attachments)
 
 	def dhcp_sync(self):
-		self.update_names(self.get_dhcpd())
+		return self.update_names(self.get_dhcpd())
 
 	def leases(self):
 		attachments = []
@@ -601,11 +603,18 @@ class boxbot:
 		devices = {}
 		for entry in db_devices:
 			devices[entry[0].upper()] = {'name': entry[1]}
-		self.update_names(devices)
+		return self.update_names(devices)
 	
 	def names_sync(self):
-		self.db_sync()
-		self.dhcp_sync()
+		db = self.db_sync()
+		dhcp = self.dhcp_sync()
+		nb_removed = 0
+		for device in db:
+			if device in dhcp:
+				self.reqbox({'service':"Devices.Device.{}".format(device),'method':'setName','parameters':{'name':device}})
+				nb_removed += 1
+		if nb_removed > 0:
+			self.output("{} name(s) removed".format(nb_removed))
 	
 	def wake(self):
 		if len(self.args) < 1:
