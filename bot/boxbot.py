@@ -194,6 +194,9 @@ class boxbot:
 		if len(output) > 0:
 			self.output('\n'.join(output))
 		return to_remove
+	
+	def format_mac(self, addr=''):
+		return addr.upper().replace(':', '-')
 
 
 	# PUBLIC METHOD
@@ -238,7 +241,7 @@ class boxbot:
 									},
 									{
 										'type': 'mrkdwn',
-										'text': item['PhysAddress']
+										'text': self.format_mac(item['PhysAddress'])
 									},
 									{
 										'type': 'mrkdwn',
@@ -291,7 +294,7 @@ class boxbot:
 							},
 							{
 								'type': 'mrkdwn',
-								'text': host
+								'text': self.format_mac(host)
 							}
 						]
 					}
@@ -322,7 +325,7 @@ class boxbot:
 							},
 							{
 								'type': 'mrkdwn',
-								'text': lease.ethernet
+								'text': self.format_mac(lease.ethernet)
 							}
 						]
 					}
@@ -399,11 +402,11 @@ class boxbot:
 						'fields': [
 							{
 								'type': 'mrkdwn',
-								'text': f"{entry[1]}"
+								'text': entry[1]
 							},
 							{
 								'type': 'mrkdwn',
-								'text': f"{entry[0]}"
+								'text': self.format_mac(entry[0])
 							}
 						]
 					}
@@ -505,11 +508,11 @@ class boxbot:
 							'fields': [
 								{
 									'type': 'mrkdwn',
-									'text': f"{entry[1]}"
+									'text': entry[1]
 								},
 								{
 									'type': 'mrkdwn',
-									'text': f"{entry[0]}"
+									'text': self.format_mac(entry[0])
 								}
 							]
 						}
@@ -625,10 +628,10 @@ class boxbot:
 				success = False
 				for addr in devices:
 					if devices[addr]['name'] == arg:
-						self.output("Wake up {} ({})".format(arg, addr))
+						self.output("Wake up {} ({})".format(arg, self.format_mac(addr)))
 						r = requests.get("https://endpoints.hexanyn.fr/wakeonlan.php?addr={}".format(addr))
 						if r.status_code == 200:
-							self.output(r.text)
+							self.output(f"```{r.text}```")
 						else:
 							self.output("Wake on lan endpoints return an error")
 						success = True
