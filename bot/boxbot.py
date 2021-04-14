@@ -197,6 +197,28 @@ class boxbot:
 	
 	def format_mac(self, addr=''):
 		return addr.upper().replace(':', '-')
+	
+	def get_name(self, addr=''):
+		payload = {'service': 'Devices', 'method': 'get', 'parameters': {}}
+		r = self.reqbox(payload)
+		name = ''
+		if r:
+			for device in r:
+				if device['DiscoverySource'] in ['bridge', 'dhcp', 'import'] and device['Key'].upper() == addr:
+					name = device['Name']
+					break
+		if not name:
+			dhcp = self.get_dhcpd()
+			addr = addr.upper()
+			if addr in dhcp:
+				name = dhcp[addr]['name']
+			else:
+				self.cur.execute("SELECT * FROM mac_filter ORDER BY name ASC;");
+				for device in self.cur.fetchall():
+					if device[0].upper() == addr:
+						name = device[1]
+						break
+		return name
 
 
 	# PUBLIC METHOD
@@ -310,13 +332,14 @@ class boxbot:
 		leases = isc_dhcp_leases.IscDhcpLeases('/dhcp/dhcpd.leases').get_current()
 		for lease in leases:
 			lease = leases[lease]
+			hostname = str(lease.hostname) if lease.hostname else self.get_name(lease.ethernet)
 			attachments.append({
 				'blocks': [
 					{
 						'type': 'section',
 						'text': {
 							'type': 'mrkdwn',
-							'text': f"*{lease.hostname}*"
+							'text': f"*{hostname}*"
 						},
 						'fields': [
 							{
