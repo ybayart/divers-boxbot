@@ -332,7 +332,8 @@ class boxbot:
 		leases = isc_dhcp_leases.IscDhcpLeases('/dhcp/dhcpd.leases').get_current()
 		for lease in leases:
 			lease = leases[lease]
-			hostname = str(lease.hostname) if lease.hostname else self.get_name(lease.ethernet)
+			name = self.get_name(lease.ethernet)
+			hostname = "{} ({})".format(str(lease.hostname), name) if lease.hostname else name
 			attachments.append({
 				'blocks': [
 					{
