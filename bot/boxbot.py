@@ -793,6 +793,7 @@ class boxbot:
 					f_name = "/tmp/{}".format(datetime.datetime.now().timestamp())
 					f = open(f_name, 'w')
 					f.write(' '.join(self.args[2:]))
+					f.write('\n')
 					f.close()
 					finger = subprocess.check_output(['ssh-keygen', '-E', 'sha256', '-lf', f_name]).decode('utf-8')
 					postgres_insert_query = """ INSERT INTO authorized_keys (name, key, fingerprint, active) VALUES (%s,%s,%s,True)"""
